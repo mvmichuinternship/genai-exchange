@@ -1,0 +1,65 @@
+# FastAPI and Core
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Google ADK (includes FastAPI integration)
+google-adk>=1.5.0
+google-cloud-aiplatform==1.38.1
+google-generativeai==0.3.2
+
+# Database
+pg8000==1.30.3              # Cloud SQL PostgreSQL driver
+asyncpg==0.29.0             # Async PostgreSQL driver
+sqlalchemy==2.0.25
+alembic==1.13.1
+
+
+# Vector Database
+qdrant-client==1.7.0
+sentence-transformers==2.2.2
+
+# Document Processing
+PyPDF2==3.0.1
+python-docx==1.1.0
+python-multipart==0.0.6
+aiofiles==23.2.1
+
+# LLM Integration
+openai==1.6.1
+
+# HTTP Client
+httpx==0.25.2
+requests==2.31.0
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+
+# Caching & Background Tasks
+redis==5.0.1
+
+# ALM Integration
+jira==3.5.0
+azure-devops==7.1.0b3
+PyGithub==2.1.1
+atlassian-python-api==3.41.10
+
+# MCP Tools (optional)
+mcp-atlassian>=0.11.9
+
+# Utilities
+python-dotenv==1.0.0
+structlog==23.2.0
+rich==13.7.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+
+# Development
+black==23.12.0
+isort==5.13.2
+flake8==6.1.0
+mypy==1.8.0
