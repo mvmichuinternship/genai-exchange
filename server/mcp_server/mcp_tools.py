@@ -2,13 +2,16 @@
 MCP Tools Registration Module
 Registers all MCP tools for Azure DevOps test case generation
 """
-
+import os
 import json
 import logging
 from typing import List, Dict, Any
 from mcp.types import TextContent
 
 logger = logging.getLogger(__name__)
+organization = os.getenv("ADO_ORG")
+project = os.getenv("ADO_PROJECT")
+personal_access_token = os.getenv("ADO_PAT")
 
 def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
     """Register all MCP tools with the server"""
@@ -16,13 +19,14 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
     # Configuration Tools
     @mcp.tool()
     async def configure_ado_connection(
-        organization: str,
-        project: str,
-        personal_access_token: str
+        organization: str = organization,
+        project: str = project,
+        personal_access_token: str = personal_access_token
     ) -> List[TextContent]:
         """Configure Azure DevOps connection"""
         try:
             ado_client.configure(organization, project, personal_access_token)
+            # ado_client.configure()
             test_result = await ado_client.test_connection()
             
             return [TextContent(type="text", text=json.dumps(test_result, indent=2))]
