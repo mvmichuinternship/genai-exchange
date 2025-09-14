@@ -1,4 +1,5 @@
-from .service import DocumentParser
-from .models import ParsedDocument
+from .service import DocumentProcessorService
+from .models import ProcessingResult, DocumentMetadata
+from .utils import DocumentProcessor, SmartTextChunker
 
-__all__ = ["DocumentParser", "ParsedDocument"]
+__all__ = ['DocumentProcessorService', 'ProcessingResult', 'DocumentMetadata', 'DocumentProcessor', 'SmartTextChunker']
