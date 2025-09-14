@@ -12,6 +12,7 @@ google-auth
 google-auth-oauthlib
 google-auth-httplib2
 google.adk
+google-cloud-alloydb-connector
 
 # Database
 pg8000
@@ -57,6 +58,8 @@ atlassian-python-api
 
 # MCP Tools (optional)
 mcp-atlassian
+mcp
+fastmcp
 
 # Utilities
 python-dotenv
