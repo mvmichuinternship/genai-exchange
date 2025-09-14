@@ -9,16 +9,11 @@ import base64
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
-import os
-from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
 class ADOClient:
     def __init__(self):
-
-        load_dotenv()
-
         self.base_url = None
         self.project = None
         self.personal_access_token = None
