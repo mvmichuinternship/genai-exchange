@@ -29,6 +29,11 @@ PyPDF2
 python-docx
 python-multipart
 aiofiles
+pymupdf
+lxml
+beautifulsoup4
+tiktoken
+aiohttp
 
 # LLM Integration
 openai
@@ -67,3 +72,4 @@ black
 isort
 flake8
 mypy
+
