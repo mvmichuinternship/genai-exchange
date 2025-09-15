@@ -168,6 +168,7 @@ async def test_requirements_to_tests_with_rag(
         if rag_context_array:
             rag_context_text = "\n".join(rag_context_array)
             enhanced_message = f"{prompt}\n\n=== ADDITIONAL CONTEXT ===\n{rag_context_text}"
+            print(enhanced_message)
 
         # Step 4: Send to sequential workflow
         result = await client.send_message(
@@ -222,13 +223,13 @@ async def ingest_documents_to_vector_store(
 
         # Get vector store using your existing config
         VECTOR_STORE_CONFIG = {
-            "type": "vertex_ai",
-            "config": {
-                "project_id": "celtic-origin-472009-n5",  # Update this
-                "index_name": "test-generation-index",
-                "endpoint_name": "test-generation-endpoint"
-            }
-        }
+    "type": "vertex_ai",
+    "config": {
+        "project_id": "celtic-origin-472009-n5",
+        "index_name": "projects/195472357560/locations/us-central1/indexes/5689930892298944512",
+        "endpoint_name": "projects/195472357560/locations/us-central1/indexEndpoints/5490892899392421888"
+    }
+}
 
         vector_store = VectorStoreFactory.create_vector_store(
             store_type=VECTOR_STORE_CONFIG["type"],
@@ -265,12 +266,17 @@ async def upload_document_with_rag_ingestion(
     document_id: Optional[str] = Form(None),
     document_type: str = Form("general", description="Type: requirements, test_specs, domain_knowledge"),
     metadata: Optional[str] = Form(None),
-    enable_rag: bool = Form(True, description="Enable RAG vector store ingestion")
+    enable_rag: bool = Form(True, description="Enable RAG vector store ingestion"),
+    fail_on_rag_error: bool = Form(False, description="Fail entire request if RAG ingestion fails")
 ):
     """
     Upload and process document with optional RAG ingestion
-    Uses your existing document processing + adds RAG capabilities
+    IMPROVED: Proper error handling and status codes
     """
+    document_processing_success = False
+    rag_ingestion_success = False
+    temp_file_path = None
+
     try:
         if not DOCUMENT_SERVICE_AVAILABLE:
             raise HTTPException(status_code=503, detail="Document processing service not available")
@@ -298,31 +304,47 @@ async def upload_document_with_rag_ingestion(
             temp_file.write(content)
             temp_file_path = temp_file.name
 
+        # Step 1: Process document using existing service
+        processing_config = {
+            'document_id': document_id,
+            'type': file_type,
+            'path': temp_file_path,
+            'original_filename': file.filename,
+            'file_size': len(content)
+        }
+
+        # Add metadata
+        if metadata:
+            try:
+                additional_metadata = json.loads(metadata)
+                processing_config.update(additional_metadata)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON metadata for document {document_id}")
+
+        # Step 1: Document Processing (MUST succeed)
         try:
-            # Step 1: Process document using existing service
-            processing_config = {
-                'document_id': document_id,
-                'type': file_type,
-                'path': temp_file_path,
-                'original_filename': file.filename,
-                'file_size': len(content)
-            }
-
-            # Add metadata
-            if metadata:
-                try:
-                    additional_metadata = json.loads(metadata)
-                    processing_config.update(additional_metadata)
-                except json.JSONDecodeError:
-                    pass
-
-            # Process using existing document service
             result = await document_service.process_document(processing_config)
+            document_processing_success = True
+            logger.info(f"Document processing successful for {document_id}")
+        except Exception as doc_error:
+            logger.error(f"Document processing failed for {document_id}: {str(doc_error)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Document processing failed: {str(doc_error)}"
+            )
 
-            # Step 2: RAG ingestion
-            rag_result = {"status": "disabled", "message": "RAG not enabled"}
+        # Step 2: RAG Ingestion (Optional, configurable failure behavior)
+        rag_result = {"status": "disabled", "message": "RAG not enabled"}
 
-            if enable_rag and RAG_AVAILABLE:
+        if enable_rag:
+            if not RAG_AVAILABLE:
+                error_msg = "RAG system not available - missing dependencies"
+                logger.error(error_msg)
+                if fail_on_rag_error:
+                    raise HTTPException(status_code=503, detail=error_msg)
+                else:
+                    rag_result = {"status": "unavailable", "message": error_msg}
+            else:
                 try:
                     # Initialize RAG helper
                     rag_helper = RAGIngestionHelper()
@@ -351,42 +373,73 @@ async def upload_document_with_rag_ingestion(
                         additional_metadata=additional_rag_metadata
                     )
 
+                    if rag_result.get("status") == "success":
+                        rag_ingestion_success = True
+                        logger.info(f"RAG ingestion successful for {document_id}")
+                    else:
+                        error_msg = f"RAG ingestion failed: {rag_result.get('message', 'Unknown error')}"
+                        logger.error(error_msg)
+                        if fail_on_rag_error:
+                            raise HTTPException(status_code=500, detail=error_msg)
+
                 except Exception as rag_error:
-                    rag_result = {
-                        "status": "error",
-                        "message": f"RAG ingestion failed: {str(rag_error)}",
-                        "rag_chunks_created": 0
-                    }
-            elif enable_rag and not RAG_AVAILABLE:
-                rag_result = {
-                    "status": "unavailable",
-                    "message": "RAG system not available - missing dependencies"
-                }
+                    error_msg = f"RAG ingestion failed: {str(rag_error)}"
+                    logger.error(error_msg)
 
-            # Return combined result
-            return JSONResponse(
-                status_code=200,
-                content={
-                    "status": "success",
-                    "document_id": document_id,
-                    "file_type": file_type,
-                    "original_filename": file.filename,
-                    "processing_result": result,
-                    "content": result.get('content'),
-                    "rag_ingestion": rag_result,
-                    "message": f"Document processed with {result.get('chunks_created', 0)} chunks" +
-                              (f" and {rag_result.get('rag_chunks_created', 0)} RAG chunks" if rag_result.get('status') == 'success' else "")
-                }
-            )
+                    if fail_on_rag_error:
+                        raise HTTPException(status_code=500, detail=error_msg)
+                    else:
+                        rag_result = {
+                            "status": "error",
+                            "message": error_msg,
+                            "rag_chunks_created": 0
+                        }
 
-        finally:
-            # Clean up temporary file
-            os.unlink(temp_file_path)
+        if document_processing_success and (not enable_rag or rag_ingestion_success):
+            status_code = 200
+            overall_status = "success"
+        elif document_processing_success and enable_rag and not rag_ingestion_success:
+            status_code = 207
+            overall_status = "partial_success"
+        else:
+            status_code = 500
+            overall_status = "failure"
+
+        response_content = {
+            "status": overall_status,
+            "document_id": document_id,
+            "file_type": file_type,
+            "original_filename": file.filename,
+            "processing_result": result,
+            "content": result.get('content'),
+            "rag_ingestion": rag_result,
+            "components": {
+                "document_processing": "success" if document_processing_success else "failed",
+                "rag_ingestion": "success" if rag_ingestion_success else ("failed" if enable_rag else "disabled")
+            },
+            "message": f"Document processed with {result.get('chunks_created', 0)} chunks" +
+                      (f" and {rag_result.get('rag_chunks_created', 0)} RAG chunks" if rag_result.get('status') == 'success' else "")
+        }
+
+        return JSONResponse(
+            status_code=status_code,
+            content=response_content
+        )
 
     except HTTPException:
+        # Re-raise HTTP exceptions (they already have proper status codes)
         raise
     except Exception as e:
+        logger.error(f"Unexpected error processing document {document_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+    finally:
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file {temp_file_path}: {cleanup_error}")
 
 @adk_test_router.post("/test-agents/requirements-to-tests")
 async def test_requirements_to_tests_workflow(

@@ -14,9 +14,9 @@ class RAGIngestionHelper:
         self.vector_store_config = vector_store_config or {
             "type": "vertex_ai",
             "config": {
-                "project_id": "celtic-origin-472009-n5",  # Update this
-                "index_name": "test-generation-index",
-                "endpoint_name": "test-generation-endpoint"
+                "project_id": "celtic-origin-472009-n5",
+                "index_name": "projects/195472357560/locations/us-central1/indexes/5689930892298944512",
+                "endpoint_name": "projects/195472357560/locations/us-central1/indexEndpoints/5490892899392421888"
             }
         }
 

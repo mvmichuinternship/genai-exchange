@@ -1,5 +1,5 @@
 from .interfaces import VectorStoreInterface, VectorSearchResult
-from google.cloud import aiplatform
+from google.cloud import aiplatform, aiplatform_v1
 from vertexai.language_models import TextEmbeddingModel
 from typing import List, Dict, Optional
 import json
@@ -44,28 +44,48 @@ class VertexAIVectorStore(VectorStoreInterface):
 
             # 2. Search the vector index
             response = self.endpoint.find_neighbors(
-                deployed_index_id=f"{self.index_name}_deployed",  # Usually index_name + "_deployed"
+                deployed_index_id="test_generation_index_deployed",
                 queries=[query_embedding],
-                num_neighbors=top_k
+                num_neighbors=top_k,
+                return_full_datapoint=True
             )
 
             # 3. Convert to generic format
             results = []
-            for neighbor in response[0]:  # First query response
-                # Extract metadata (you'll need to store this during ingestion)
-                metadata = neighbor.datapoint.restricts or {}
+            for neighbor in response[0]:
+                content = ""
+                metadata_dict = {}
 
-                results.append(VectorSearchResult(
-                    content=metadata.get("text_content", ""),  # Your stored text
-                    score=1 - neighbor.distance,  # Convert distance to similarity score
-                    metadata=metadata,
-                    source=metadata.get("source", "vertex_ai")
-                ))
+                # Parse restricts - they're Namespace objects with name, allow_tokens, deny_tokens
+                for restrict in (neighbor.restricts or []):
+                    namespace_name = restrict.name  # Use 'name' not 'namespace'
+                    allow_values = restrict.allow_tokens or []  # Use 'allow_tokens' not 'allow_list'
 
+                    # Get the first value if available
+                    value = allow_values[0] if allow_values else ""
+
+                    if namespace_name == "content":
+                        content = value  # ✅ Get content from restricts
+                    else:
+                        metadata_dict[namespace_name] = value
+
+                # Only add results that have content
+                if content:
+                    results.append(VectorSearchResult(
+                        content=content,
+                        score=1 - neighbor.distance,  # Convert distance to similarity score
+                        metadata=metadata_dict,
+                        source="vertex_ai"
+                    ))
+                    print(f"Added result: {content[:100]}...")  # Show first 100 chars
+
+            print(f"Extracted {len(results)} results with content")
             return results
 
         except Exception as e:
             print(f"Vector search failed: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     async def ingest_documents(self, text_array: List[str], metadata: Dict) -> Dict:
@@ -83,19 +103,31 @@ class VertexAIVectorStore(VectorStoreInterface):
             for i, (text, embedding) in enumerate(zip(text_array, embeddings)):
                 datapoint_id = f"{metadata.get('doc_id', 'unknown')}_{i}"
 
-                # Prepare metadata (restrictions in Vertex AI terminology)
-                restricts = {
-                    "text_content": text,
-                    "doc_id": metadata.get("doc_id", ""),
-                    "document_type": metadata.get("document_type", "general"),
-                    "chunk_index": str(i)
-                }
+                restricts = [
+                aiplatform_v1.types.index.IndexDatapoint.Restriction(
+                    namespace="doc_id",
+                    allow_list=[metadata.get("doc_id", "")]
+                ),
+                aiplatform_v1.types.index.IndexDatapoint.Restriction(
+                    namespace="doc_type",
+                    allow_list=[metadata.get("document_type", "general")]
+                ),
+                aiplatform_v1.types.index.IndexDatapoint.Restriction(
+                    namespace="content",
+                    allow_list=[text]
+                ),
+                aiplatform_v1.types.index.IndexDatapoint.Restriction(
+                    namespace="chunk_index",
+                    allow_list=[str(i)]
+                )
+            ]
 
-                datapoints.append({
-                    "datapoint_id": datapoint_id,
-                    "feature_vector": embedding.values,
-                    "restricts": restricts
-                })
+                datapoint = aiplatform_v1.types.index.IndexDatapoint(
+                    datapoint_id=datapoint_id,
+                    feature_vector=embedding.values,
+                    restricts=restricts
+                )
+                datapoints.append(datapoint)
 
             # 3. Upsert to index
             self.index.upsert_datapoints(datapoints=datapoints)
@@ -120,7 +152,7 @@ class VertexAIVectorStore(VectorStoreInterface):
 
             if self.endpoint:
                 self.endpoint.find_neighbors(
-                    deployed_index_id=f"{self.index_name}_deployed",
+                    deployed_index_id=f"{self.index_name}",
                     queries=[test_embedding],
                     num_neighbors=1
                 )
