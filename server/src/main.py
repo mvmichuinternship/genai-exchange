@@ -14,6 +14,7 @@ from google.adk.cli.fast_api import get_fast_api_app
 
 # Import your controller
 from controller.adk_integrated_controller import adk_test_router
+from controller.session_api_controller import router as session_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -92,6 +93,7 @@ except Exception as e:
 
 # Include your controller
 app.include_router(adk_test_router, prefix="/api/agents", tags=["adk-agent-testing"])
+app.include_router(session_router, prefix="/api/v1", tags=["Sessions"])
 
 @app.get("/")
 async def root():
