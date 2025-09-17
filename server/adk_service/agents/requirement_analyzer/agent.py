@@ -3,31 +3,21 @@ from google.adk.planners import BuiltInPlanner
 from google.genai import types
 from google.adk.tools import ToolContext
 from typing import List, Dict, Any
+from google.adk.sessions import InMemorySessionService, Session
+from google.adk.runners import Runner
 
 async def analyze_requirements_context_tool(
     text_array: List[str],
     analysis_depth: str = "comprehensive",
     tool_context: ToolContext = None
 ):
-    """
-    Analyze requirements and store context in session state
-    """
-
-    # Validate input
     if not text_array:
-        return {
-            "status": "error",
-            "message": "No requirements provided for analysis"
-        }
+        return {"status": "error", "message": "No requirements provided for analysis"}
 
     if not tool_context:
-        return {
-            "status": "error",
-            "message": "ToolContext is required for session state storage"
-        }
+        return {"status": "error", "message": "ToolContext is required for session state storage"}
 
     try:
-        # Create structured analysis context
         analyzed_context = {
             "requirements_analysis": {
                 "functional_requirements": [f"Functional requirement: {req}" for req in text_array],
@@ -77,9 +67,10 @@ async def analyze_requirements_context_tool(
             }
         }
 
-        # Store in session state using ToolContext.state (NOT tool_context.session.state)
         tool_context.state["analyzed_requirements_context"] = analyzed_context
         tool_context.state["ready_for_test_generation"] = True
+
+        print(analyzed_context)
 
         return {
             "status": "success",
@@ -88,18 +79,9 @@ async def analyze_requirements_context_tool(
             "context_stored_in_session": True
         }
 
-    except AttributeError as e:
-        return {
-            "status": "error",
-            "message": f"ToolContext error: {str(e)}. Make sure you're using tool_context.state, not tool_context.session.state"
-        }
     except Exception as e:
-        return {
-            "status": "error",
-            "message": f"Requirements analysis failed: {str(e)}"
-        }
+        return {"status": "error", "message": f"Requirements analysis failed: {str(e)}"}
 
-# Requirements Analyzer Agent
 requirement_analyzer_agent = Agent(
     model="gemini-2.5-flash",
     name="requirement_analyzer_agent",
@@ -139,3 +121,53 @@ requirement_analyzer_agent = Agent(
         )
     ),
 )
+
+async def analyze_requirements(requirements_list: List[str], analysis_depth: str = "comprehensive") -> Dict[str, Any]:
+    try:
+        # Create session and runner
+        session_service = InMemorySessionService()
+        session = await session_service.create_session(
+            app_name="requirement_analyzer",
+            user_id="user_123"
+        )
+        runner = Runner(
+            agent=requirement_analyzer_agent,
+            app_name="requirement_analyzer",
+            session_service=session_service
+        )
+
+        # Convert requirements list to text
+        requirements_text = "\n".join([f"- {req}" for req in requirements_list])
+        content = types.Content(
+            role='user',
+            parts=[types.Part(text=f"Analyze these requirements:\n{requirements_text}")]
+        )
+
+        # Run and collect response
+        events = runner.run_async(
+            user_id="user_123",
+            session_id=session.id,
+            new_message=content
+        )
+
+        response_text = ""
+        async for event in events:
+            if event.is_final_response():
+                response_text = event.content.parts[0].text
+                break
+
+        # print(response_text)
+        return {
+            "status": "success",
+            "response": response_text,
+            "agent_used": "requirement_analyzer_agent",
+            "requirements_count": len(requirements_list)
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "agent_used": "requirement_analyzer_agent"
+        }
+

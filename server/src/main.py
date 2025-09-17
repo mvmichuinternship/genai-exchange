@@ -1,173 +1,185 @@
-from fastapi import FastAPI
+import logging
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import os
-import warnings
-from contextlib import asynccontextmanager
 
-# Suppress ADK experimental warnings
-warnings.filterwarnings("ignore", message=".*EXPERIMENTAL.*")
-warnings.filterwarnings("ignore", message=".*TracerProvider.*")
-
-# Import ADK after suppressing warnings
-from google.adk.cli.fast_api import get_fast_api_app
-
-# Import your controller
-from controller.adk_integrated_controller import adk_test_router
+# Import your controllers
 from controller.session_api_controller import router as session_router
+from controller.requirements_controller import router as requirements_router
+from controller.test_cases_controller import router as test_cases_router
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    yield
+# Import database manager
+from modules.database.database_manager import db_manager
+from modules.cache.redis_manager import redis_manager
 
-# Create the main FastAPI app
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Create FastAPI app
 app = FastAPI(
-    title="Intelligent Test Case Generator - Direct ADK Integration",
-    description="Direct communication with ADK agents",
-    version="1.0.0",
-    lifespan=lifespan
+    title="Test Case Generator API",
+    description="AI-powered test case generation with RAG and session management",
+    version="2.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Configure for production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Get the correct agents directory path - FIXED to look in sibling directory
-# Current structure: server/src/main.py and server/adk_service/agents/
-current_dir = os.path.dirname(__file__)  # server/src/
-parent_dir = os.path.dirname(current_dir)  # server/
-agents_dir = os.path.join(parent_dir, "adk_service", "agents")  # server/adk_service/agents/
+# ===============================
+# GLOBAL ERROR HANDLERS
+# ===============================
 
-# Create and mount ADK app
-try:
-    print(f"📁 Loading ADK agents from: {agents_dir}")
-    print(f"📁 Directory exists: {os.path.exists(agents_dir)}")
-    print(f"📁 Current working directory: {os.getcwd()}")
-    print(f"📁 Script location: {current_dir}")
-    print(f"📁 Parent directory: {parent_dir}")
-
-    # List agents found
-    if os.path.exists(agents_dir):
-        print(f"✅ Agents directory found!")
-        for item in os.listdir(agents_dir):
-            agent_path = os.path.join(agents_dir, item)
-            if os.path.isdir(agent_path):
-                print(f"🤖 Found agent directory: {item}")
-                # Check if it has the required files
-                init_file = os.path.join(agent_path, "__init__.py")
-                agent_file = os.path.join(agent_path, "agent.py")
-                print(f"   - __init__.py exists: {os.path.exists(init_file)}")
-                print(f"   - agent.py exists: {os.path.exists(agent_file)}")
-    else:
-        print(f"❌ Agents directory not found at: {agents_dir}")
-        print("📂 Looking for alternative paths...")
-
-        # Try some alternative paths
-        alt_paths = [
-            os.path.join(current_dir, "adk_service", "agents"),
-            os.path.join(os.getcwd(), "adk_service", "agents"),
-            os.path.join(parent_dir, "adk_service"),
-            os.path.join(current_dir, "..", "adk_service", "agents")
-        ]
-
-        for alt_path in alt_paths:
-            abs_alt_path = os.path.abspath(alt_path)
-            print(f"   Trying: {abs_alt_path} -> {os.path.exists(abs_alt_path)}")
-
-    adk_app = get_fast_api_app(
-        agents_dir=agents_dir,
-        web=True  # Enable web UI
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    logger.error(f"HTTP error {exc.status_code} at {request.url}: {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": exc.detail,
+            "path": str(request.url),
+            "method": request.method
+        }
     )
 
-    # Mount ADK app as sub-application
-    app.mount("/adk", adk_app)
-    print("✅ ADK app created and mounted successfully at /adk")
+@app.exception_handler(Exception)
+async def general_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled error at {request.url}: {str(exc)}", exc_info=True)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "Internal server error",
+            "path": str(request.url),
+            "method": request.method
+        }
+    )
 
-except Exception as e:
-    print(f"❌ Error creating ADK app: {e}")
-    print("Continuing without ADK integration...")
+# ===============================
+# STARTUP AND SHUTDOWN EVENTS
+# ===============================
 
-# Include your controller
-app.include_router(adk_test_router, prefix="/api/agents", tags=["adk-agent-testing"])
-app.include_router(session_router, prefix="/api/v1", tags=["Sessions"])
+@app.on_event("startup")
+async def startup():
+    try:
+        await db_manager.initialize()
+        await redis_manager.initialize()
+        logger.info("✅ Database initialized successfully")
+        logger.info("✅ Application started successfully")
+    except Exception as e:
+        logger.error(f"❌ Startup failed: {e}")
+        raise
+
+@app.on_event("shutdown")
+async def shutdown():
+    try:
+        await db_manager.close()
+        logger.info("✅ Database connections closed")
+        logger.info("✅ Application shutdown complete")
+    except Exception as e:
+        logger.error(f"❌ Shutdown error: {e}")
+
+# ===============================
+# ROUTE REGISTRATION
+# ===============================
+
+# Register all routers with proper prefixes
+app.include_router(
+    session_router,
+    prefix="/api/v2/sessions",
+    tags=["Session Management"]
+)
+
+app.include_router(
+    requirements_router,
+    prefix="/api/v2/requirements",
+    tags=["Requirements Analysis"]
+)
+
+app.include_router(
+    test_cases_router,
+    prefix="/api/v2/test-cases",
+    tags=["Test Case Generation"]
+)
+
+# ===============================
+# ROOT ENDPOINTS
+# ===============================
 
 @app.get("/")
 async def root():
     return {
-        "message": "Intelligent Test Case Generator - Direct ADK Integration",
-        "status": "✅ Running",
-        "agents_directory": agents_dir,
-        "test_endpoints": {
-            "complete_workflow": "/api/agents/test-agents/requirements-to-tests",
-            "validate_and_test": "/api/agents/test-agents/validate-and-test",
-            "diagnose": "/api/agents/test-agents/diagnose",
-            "health_check": "/api/agents/test-agents/health"
-        },
-        "adk_endpoints": {
-            "web_ui": "/adk",
-            "agents_api": "/adk/apps/",
-            "run_agent": "/adk/run"
-        },
-        "services": {
-            "api_docs": "/docs",
-            "adk_web_ui": "/adk"
-        }
+        "message": "Test Case Generator API",
+        "version": "2.0.0",
+        "status": "running",
+        "docs": "/docs",
+        "redoc": "/redoc"
     }
 
-@app.get("/status")
-async def get_status():
-    """Get application status"""
-    agents_found = []
-    if os.path.exists(agents_dir):
-        agents_found = [
-            item for item in os.listdir(agents_dir)
-            if os.path.isdir(os.path.join(agents_dir, item))
+@app.get("/health")
+async def health_check():
+    try:
+        # Check database connection
+        async with db_manager.pool.acquire() as conn:
+            await conn.fetchval("SELECT 1")
+
+        return {
+            "status": "healthy",
+            "database": "connected",
+            "agents": "ready",
+            "timestamp": "2025-09-17T00:20:00Z"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "database": "disconnected",
+                "error": str(e)
+            }
+        )
+
+@app.get("/api/info")
+async def api_info():
+    return {
+        "api_name": "Test Case Generator",
+        "version": "2.0.0",
+        "endpoints": {
+            "sessions": "/api/v2/sessions",
+            "requirements": "/api/v2/requirements",
+            "test_cases": "/api/v2/test-cases"
+        },
+        "features": [
+            "Session Management",
+            "Requirements Analysis",
+            "Test Case Generation",
+            "RAG Integration",
+            "Coverage Reports",
+            "Analytics"
         ]
-
-    return {
-        "application": "running",
-        "adk_integration": "enabled",
-        "agents_directory": agents_dir,
-        "agents_directory_exists": os.path.exists(agents_dir),
-        "agents_found": agents_found,
-        "working_directory": os.getcwd(),
-        "script_location": os.path.dirname(__file__)
     }
 
-@app.get("/debug-paths")
-async def debug_paths():
-    """Debug endpoint to check all relevant paths"""
-    current_dir = os.path.dirname(__file__)
-    parent_dir = os.path.dirname(current_dir)
-
-    return {
-        "current_working_directory": os.getcwd(),
-        "script_location": current_dir,
-        "parent_directory": parent_dir,
-        "configured_agents_dir": agents_dir,
-        "agents_dir_exists": os.path.exists(agents_dir),
-        "alternative_paths": {
-            path: os.path.exists(path) for path in [
-                os.path.join(current_dir, "adk_service", "agents"),
-                os.path.join(os.getcwd(), "adk_service", "agents"),
-                os.path.join(parent_dir, "adk_service"),
-                os.path.join(current_dir, "..", "adk_service", "agents")
-            ]
-        },
-        "directory_contents": {
-            "current_dir": os.listdir(current_dir) if os.path.exists(current_dir) else [],
-            "parent_dir": os.listdir(parent_dir) if os.path.exists(parent_dir) else [],
-            "working_dir": os.listdir(os.getcwd()) if os.path.exists(os.getcwd()) else []
-        }
-    }
+# ===============================
+# MAIN ENTRY POINT
+# ===============================
 
 if __name__ == "__main__":
-    print("🚀 Starting Intelligent Test Case Generator...")
-    print(f"📍 Working from: {os.getcwd()}")
-    print(f"📍 Script at: {os.path.dirname(__file__)}")
-    print(f"📍 Looking for agents at: {agents_dir}")
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

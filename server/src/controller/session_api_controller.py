@@ -1,246 +1,218 @@
+import logging
 from fastapi import APIRouter, HTTPException, Request
 import uuid
 import json
 from typing import List, Dict, Any, Optional
-from ..modules.database.database_manager import db_manager
-from ..modules.database.session_service import SessionService
-from .adk_integrated_controller import ADKController  # Your existing controller
+
+from adk_service.agents.requirement_analyzer.agent import (
+    requirement_analyzer_agent,
+    analyze_requirements
+)
+from adk_service.agents.test_case_generator.agent import (
+    test_case_generator_agent,
+    generate_test_cases
+)
+from modules.database.database_manager import db_manager
+from modules.database.session_service import SessionService
+from utils.parsers import (
+    parse_test_cases_from_agent_response,
+    parse_test_cases_from_text,
+    extract_requirements_from_workflow,
+    extract_test_cases_from_workflow
+)
+
+# Add your RAG import here - ADJUST THE PATH TO YOUR ACTUAL RAG MODULE
+from modules.data_ingestion.rag_tool import get_rag_context_as_text_array_tool
+
+router = APIRouter()
+logger = logging.getLogger(__name__)  # ✅ CORRECT LOGGER
 
 class SessionAPIController:
     def __init__(self):
-        self.adk_controller = ADKController()  # Instance of your existing controller
+        # ✅ CORRECT - Use agent instances, not classes
+        self.requirement_analyzer = requirement_analyzer_agent
+        self.test_case_generator = test_case_generator_agent
 
-    # ===============================
-    # SESSION MANAGEMENT APIs
-    # ===============================
-
-    async def create_session_and_run_workflow(self, request: Request):
-        """Create session + run your existing ADK workflow"""
+    # ✅ ADD THIS METHOD - Simple session creation without sequential workflow
+    async def create_simple_session(self, request: Request):
+        """Create a simple session without running workflow"""
         data = await request.json()
         user_id = data.get('user_id', 'default_user')
         project_name = data.get('project_name', 'New Project')
-        user_prompt = data.get('prompt')
+        user_prompt = data.get('prompt', 'Default session prompt')
 
         if not user_prompt:
             raise HTTPException(status_code=400, detail="Prompt is required")
 
-        # Generate session ID
         session_id = f"session_{uuid.uuid4().hex[:12]}"
 
         try:
-            # 1. Create session in database
+            # Just create the session in database
             await db_manager.create_session(session_id, user_id, project_name, user_prompt)
+            await db_manager.update_session_status(session_id, "created")
 
-            # 2. Call your existing ADK workflow (no changes to your existing code)
-            workflow_response = await self.adk_controller.run_sequential_workflow(user_prompt)
-
-            # 3. Extract and save results to database
-            await self._extract_and_save_workflow_results(session_id, workflow_response)
-
-            # 4. Update session status
-            await db_manager.update_session_status(session_id, "completed")
-
-            # 5. Return enhanced response
             return {
-                **workflow_response,  # Your exact existing response
                 "session_id": session_id,
                 "user_id": user_id,
                 "project_name": project_name,
+                "user_prompt": user_prompt,
+                "status": "created",
+                "message": "Session created successfully",
                 "database_saved": True
             }
-
         except Exception as e:
-            await db_manager.update_session_status(session_id, "failed")
-            raise HTTPException(status_code=500, detail=f"Workflow failed: {str(e)}")
+            logger.error(f"Failed to create session: {e}")
+            raise HTTPException(status_code=500, detail=f"Session creation failed: {str(e)}")
 
     async def get_session(self, session_id: str):
-        """Get session with summary data"""
-        try:
-            session_data = await SessionService.get_session_summary(session_id)
-            if not session_data:
-                raise HTTPException(status_code=404, detail="Session not found")
-            return session_data
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        session_data = await SessionService.get_session_summary(session_id)
+        if not session_data:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return session_data
 
     async def list_user_sessions(self, user_id: str):
-        """Get all sessions for a user"""
-        try:
-            sessions = await SessionService.get_user_sessions(user_id)
-            return {
-                "user_id": user_id,
-                "sessions": sessions,
-                "total_count": len(sessions)
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    # ===============================
-    # REQUIREMENTS MANAGEMENT APIs
-    # ===============================
+        sessions = await SessionService.get_user_sessions(user_id)
+        return {
+            "user_id": user_id,
+            "sessions": sessions,
+            "total_count": len(sessions)
+        }
 
     async def get_session_requirements(self, session_id: str):
-        """Get requirements for user editing"""
-        try:
-            requirements = await db_manager.get_requirements(session_id)
-            return {
-                "session_id": session_id,
-                "requirements": requirements,
-                "total_count": len(requirements)
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        requirements = await db_manager.get_requirements(session_id)
+        return {
+            "session_id": session_id,
+            "requirements": requirements,
+            "total_count": len(requirements)
+        }
 
     async def update_requirements(self, session_id: str, request: Request):
-        """Save user-edited requirements"""
-        try:
-            data = await request.json()
-            requirements = data.get('requirements', [])
-
-            if not requirements:
-                raise HTTPException(status_code=400, detail="Requirements list is required")
-
-            result = await db_manager.update_requirements(session_id, requirements)
-            return {
-                **result,
-                "message": f"Successfully updated {result['updated_count']} requirements"
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        data = await request.json()
+        requirements = data.get('requirements', [])
+        if not requirements:
+            raise HTTPException(status_code=400, detail="Requirements list is required")
+        result = await db_manager.update_requirements(session_id, requirements)
+        return {
+            **result,
+            "message": f"Successfully updated {result['updated_count']} requirements"
+        }
 
     async def add_new_requirement(self, session_id: str, request: Request):
-        """Add new user requirement"""
-        try:
-            data = await request.json()
-            content = data.get('content')
-            req_type = data.get('type', 'functional')
-            priority = data.get('priority', 'medium')
-
-            if not content:
-                raise HTTPException(status_code=400, detail="Requirement content is required")
-
-            result = await db_manager.add_requirement(session_id, content, req_type)
-            return {
-                **result,
-                "message": "New requirement added successfully"
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        data = await request.json()
+        content = data.get('content')
+        req_type = data.get('type', 'functional')
+        priority = data.get('priority', 'medium')
+        if not content:
+            raise HTTPException(status_code=400, detail="Requirement content is required")
+        result = await db_manager.add_requirement(session_id, content, req_type)
+        return {
+            **result,
+            "message": "New requirement added successfully"
+        }
 
     async def delete_requirement(self, session_id: str, requirement_id: str):
-        """Soft delete a requirement"""
         try:
             async with db_manager.pool.acquire() as conn:
                 await conn.execute('''
-                    UPDATE requirements
-                    SET status = 'deleted', updated_at = NOW()
+                    UPDATE requirements SET status = 'deleted', updated_at = NOW()
                     WHERE id = $1 AND session_id = $2
                 ''', requirement_id, session_id)
-
             return {
                 "status": "deleted",
                 "requirement_id": requirement_id,
                 "message": "Requirement deleted successfully"
             }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    # ===============================
-    # TEST CASE MANAGEMENT APIs
-    # ===============================
+            logger.error(f"Failed to delete requirement {requirement_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to delete requirement: {str(e)}")
 
     async def get_session_test_cases(self, session_id: str):
-        """Get generated test cases with requirement links"""
-        try:
-            test_cases = await db_manager.get_test_cases(session_id)
-            return {
-                "session_id": session_id,
-                "test_cases": test_cases,
-                "total_count": len(test_cases)
-            }
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+        test_cases = await db_manager.get_test_cases(session_id)
+        return {
+            "session_id": session_id,
+            "test_cases": test_cases,
+            "total_count": len(test_cases)
+        }
 
     async def regenerate_test_cases_for_requirement(self, session_id: str, requirement_id: str):
-        """Regenerate test cases for specific requirement"""
         try:
-            # Get the requirement (including user edits)
             requirements = await db_manager.get_requirements(session_id)
             target_req = next((r for r in requirements if r['id'] == requirement_id), None)
-
             if not target_req:
                 raise HTTPException(status_code=404, detail="Requirement not found")
 
-            # Call your existing test generation logic for single requirement
-            new_test_cases = await self._generate_test_cases_for_requirement(target_req)
+            # ✅ CORRECT - Use the actual agent function
+            requirement_text = target_req.get('edited_content') or target_req.get('original_content')
+            agent_response = await generate_test_cases(
+                session_context=None,
+                prompt=f"Generate test cases for this requirement: {requirement_text}"
+            )
 
-            # Save with requirement links
-            test_cases_with_links = [{
-                **tc,
-                'requirement_ids': [requirement_id]
-            } for tc in new_test_cases]
+            if agent_response['status'] == 'success':
+                new_test_cases = parse_test_cases_from_agent_response(agent_response['response'])
+                test_cases_with_links = [{
+                    **tc,
+                    'requirement_ids': [requirement_id]
+                } for tc in new_test_cases]
+                await db_manager.save_test_cases(session_id, test_cases_with_links)
 
-            await db_manager.save_test_cases(session_id, test_cases_with_links)
+                return {
+                    "status": "regenerated",
+                    "requirement_id": requirement_id,
+                    "new_test_cases_count": len(new_test_cases),
+                    "message": f"Generated {len(new_test_cases)} new test cases"
+                }
+            else:
+                raise HTTPException(status_code=500, detail=f"Test generation failed: {agent_response['message']}")
 
-            return {
-                "status": "regenerated",
-                "requirement_id": requirement_id,
-                "new_test_cases_count": len(new_test_cases),
-                "message": f"Generated {len(new_test_cases)} new test cases"
-            }
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
+            logger.error(f"Failed to regenerate test cases for requirement {requirement_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Test case regeneration failed: {str(e)}")
 
     async def regenerate_all_test_cases(self, session_id: str):
-        """Regenerate all test cases for the session"""
         try:
-            # Get all current requirements (including user edits)
             requirements = await db_manager.get_requirements(session_id)
-
             if not requirements:
                 raise HTTPException(status_code=400, detail="No requirements found")
 
-            # Use your existing test generation workflow with updated requirements
             updated_prompt = self._build_prompt_from_requirements(requirements)
-            new_workflow_response = await self.adk_controller.run_test_generation_only(updated_prompt)
-
-            # Clear existing test cases and save new ones
             await self._clear_existing_test_cases(session_id)
-            await self._extract_and_save_test_cases_only(session_id, new_workflow_response)
 
-            # Get updated test cases
-            new_test_cases = await db_manager.get_test_cases(session_id)
+            # ✅ CORRECT - Use the actual agent function
+            agent_response = await generate_test_cases(session_context=None, prompt=updated_prompt)
 
-            return {
-                "status": "regenerated_all",
-                "session_id": session_id,
-                "new_test_cases_count": len(new_test_cases),
-                "message": "All test cases regenerated successfully"
-            }
+            if agent_response['status'] == 'success':
+                new_test_cases = parse_test_cases_from_agent_response(agent_response['response'])
+                await db_manager.save_test_cases(session_id, new_test_cases)
+
+                return {
+                    "status": "regenerated_all",
+                    "session_id": session_id,
+                    "new_test_cases_count": len(new_test_cases),
+                    "message": "All test cases regenerated successfully"
+                }
+            else:
+                raise HTTPException(status_code=500, detail=f"Test regeneration failed: {agent_response['message']}")
+
         except Exception as e:
-            raise HTTPException(status_code=500, detail=str(e))
-
-    # ===============================
-    # ANALYTICS & REPORTING APIs
-    # ===============================
+            logger.error(f"Failed to regenerate all test cases for session {session_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Test case regeneration failed: {str(e)}")
 
     async def get_coverage_report(self, session_id: str):
-        """Get requirements coverage report"""
         try:
             report = await db_manager.get_coverage_report(session_id)
             return report
         except Exception as e:
+            logger.error(f"Failed to get coverage report for session {session_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
     async def get_session_analytics(self, session_id: str):
-        """Get session analytics"""
         try:
             session = await db_manager.get_session(session_id)
             requirements = await db_manager.get_requirements(session_id)
             test_cases = await db_manager.get_test_cases(session_id)
             coverage = await db_manager.get_coverage_report(session_id)
 
-            # Calculate additional metrics
             edited_requirements = sum(1 for r in requirements if r.get('edited_content'))
             user_created_requirements = sum(1 for r in requirements if r.get('status') == 'user_created')
 
@@ -257,14 +229,10 @@ class SessionAPIController:
                 "coverage_summary": coverage
             }
         except Exception as e:
+            logger.error(f"Failed to get analytics for session {session_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    # ===============================
-    # EXPORT APIs
-    # ===============================
-
     async def export_session_data(self, session_id: str, format_type: str = "json"):
-        """Export complete session data"""
         try:
             session = await db_manager.get_session(session_id)
             requirements = await db_manager.get_requirements(session_id)
@@ -274,106 +242,126 @@ class SessionAPIController:
                 "session": session,
                 "requirements": requirements,
                 "test_cases": test_cases,
-                "exported_at": "2025-09-16T18:06:00Z"
+                "exported_at": "2025-09-17T00:47:00Z"
             }
 
             if format_type.lower() == "csv":
-                # Convert to CSV format for ALM tools
                 return self._convert_to_csv_format(export_data)
             else:
                 return export_data
-
         except Exception as e:
+            logger.error(f"Failed to export session data for {session_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    # ===============================
-    # HELPER METHODS
-    # ===============================
+    async def fetch_and_save_rag_context(self, request: Request):
+        """Fetch RAG context and save to database for agent access"""
+        data = await request.json()
+        prompt = data.get('prompt')
+        session_id = data.get('session_id')
+        user_id = data.get('user_id', 'default_user')
+        project_name = data.get('project_name', 'RAG Context Session')
+        context_scope = data.get('context_scope', 'comprehensive')
+        enable_rag = data.get('enable_rag', True)
 
-    async def _extract_and_save_workflow_results(self, session_id: str, workflow_response: dict):
-        """Extract and save results from your existing workflow"""
+        if not prompt:
+            raise HTTPException(status_code=400, detail="Prompt is required")
+
+        if not session_id:
+            session_id = f"rag_session_{uuid.uuid4().hex[:12]}"
+            await db_manager.create_session(session_id, user_id, project_name, prompt)
+
+        rag_context_array = []
+
+        if enable_rag:
+            try:
+                rag_context_array = await get_rag_context_as_text_array_tool(
+                    query_context=prompt,
+                    context_scope=context_scope
+                )
+                logger.info(f"RAG context retrieved: {len(rag_context_array)} items")
+            except Exception as rag_error:
+                logger.warning(f"RAG context failed, continuing without: {rag_error}")
+
+        if rag_context_array:
+            await db_manager.save_requirements(session_id, rag_context_array)
+
+            async with db_manager.pool.acquire() as conn:
+                await conn.execute('''
+                    UPDATE requirements
+                    SET requirement_type = 'rag_context', priority = 'high'
+                    WHERE session_id = $1 AND requirement_type = 'functional'
+                ''', session_id)
+
+        await db_manager.update_session_status(session_id, "rag_context_loaded")
+
+        return {
+            "session_id": session_id,
+            "status": "success",
+            "prompt": prompt,
+            "rag_enabled": enable_rag,
+            "rag_items_count": len(rag_context_array),
+            "context_scope": context_scope,
+            "message": f"RAG context fetched and saved: {len(rag_context_array)} items",
+            "database_saved": True
+        }
+
+    async def get_rag_context(self, session_id: str):
+        """Get saved RAG context for a session"""
         try:
-            # Extract requirements
-            requirements = self._extract_requirements_from_workflow(workflow_response.get('workflow_result', []))
-            if requirements:
-                await db_manager.save_requirements(session_id, requirements)
+            async with db_manager.pool.acquire() as conn:
+                rows = await conn.fetch('''
+                    SELECT original_content, created_at
+                    FROM requirements
+                    WHERE session_id = $1 AND requirement_type = 'rag_context'
+                    ORDER BY created_at ASC
+                ''', session_id)
 
-            # Extract test cases
-            test_cases = self._extract_test_cases_from_workflow(workflow_response.get('workflow_result', []))
-            if test_cases:
-                await db_manager.save_test_cases(session_id, test_cases)
+            rag_items = [dict(row) for row in rows]
 
+            return {
+                "session_id": session_id,
+                "rag_context": rag_items,
+                "total_items": len(rag_items)
+            }
         except Exception as e:
-            print(f"Warning: Could not extract workflow results: {e}")
+            logger.error(f"Failed to retrieve RAG context for session {session_id}: {e}")
+            raise HTTPException(status_code=500, detail=f"Failed to retrieve RAG context: {str(e)}")
 
-    def _extract_requirements_from_workflow(self, workflow_result: List[dict]) -> List[str]:
-        """Extract requirements from requirement_analyzer_agent"""
-        requirements = []
-
-        for result in workflow_result:
-            if result.get('author') == 'requirement_analyzer_agent':
-                actions = result.get('actions', {})
-                state_delta = actions.get('stateDelta', {})
-                req_context = state_delta.get('analyzed_requirements_context', {})
-
-                if req_context:
-                    functional_reqs = req_context.get('requirements_analysis', {}).get('functional_requirements', [])
-                    requirements.extend(functional_reqs)
-
-        return requirements
-
-    def _extract_test_cases_from_workflow(self, workflow_result: List[dict]) -> List[dict]:
-        """Extract test cases from test_case_generator_agent"""
-        test_cases = []
-
-        for result in workflow_result:
-            if result.get('author') == 'test_case_generator_agent':
-                # Parse test cases from agent output
-                # This depends on your agent's exact response format
-                # You'll need to customize this based on your agent structure
-                pass
-
-        return test_cases
-
-    async def _generate_test_cases_for_requirement(self, requirement: dict) -> List[dict]:
-        """Use your existing agent to generate tests for single requirement"""
-        # Call your test generation agent with single requirement
-        # This depends on your existing agent structure
-        return []
+    # ===============================
+    # PRIVATE HELPER METHODS
+    # ===============================
 
     def _build_prompt_from_requirements(self, requirements: List[dict]) -> str:
-        """Build prompt from current requirements for regeneration"""
         req_texts = [r.get('edited_content') or r.get('original_content') for r in requirements]
-        return f"Generate test cases for these requirements: {'; '.join(req_texts)}"
+        return f"Generate comprehensive test cases for these requirements: {'; '.join(req_texts)}"
 
     async def _clear_existing_test_cases(self, session_id: str):
-        """Mark existing test cases as inactive"""
         async with db_manager.pool.acquire() as conn:
             await conn.execute('''
-                UPDATE test_cases
-                SET status = 'replaced'
+                UPDATE test_cases SET status = 'replaced'
                 WHERE session_id = $1 AND status = 'active'
             ''', session_id)
 
     def _convert_to_csv_format(self, export_data: dict) -> dict:
-        """Convert export data to CSV-friendly format for ALM tools"""
-        # Convert to format suitable for ALM tool import
         return {
             "format": "csv",
             "requirements_csv": "requirement_id,content,type,priority\n...",
             "test_cases_csv": "test_id,name,description,steps,expected_result\n..."
         }
 
-# Create router instance for FastAPI
-router = APIRouter()
+# ===============================
+# SESSION CONTROLLER INSTANCE
+# ===============================
 
-# Initialize controller
 session_controller = SessionAPIController()
 
-# Define routes
+# ===============================
+# API ROUTES - FIXED
+# ===============================
+
 @router.post("/sessions")
 async def create_session(request: Request):
-    return await session_controller.create_session_and_run_workflow(request)
+    return await session_controller.create_simple_session(request)  # ✅ FIXED - Now calls correct method
 
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):
@@ -422,3 +410,12 @@ async def session_analytics(session_id: str):
 @router.get("/sessions/{session_id}/export")
 async def export_session(session_id: str, format: str = "json"):
     return await session_controller.export_session_data(session_id, format)
+
+# RAG ENDPOINTS
+@router.post("/rag/fetch-and-save")
+async def fetch_and_save_rag_context(request: Request):
+    return await session_controller.fetch_and_save_rag_context(request)
+
+@router.get("/rag/{session_id}")
+async def get_rag_context(session_id: str):
+    return await session_controller.get_rag_context(session_id)

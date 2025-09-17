@@ -3,22 +3,13 @@ from google.adk.planners import BuiltInPlanner
 from google.genai import types
 from google.adk.tools import ToolContext
 from typing import List, Dict, Any
+from google.adk.sessions import InMemorySessionService, Session
+from google.adk.runners import Runner
 
-
-async def retrieve_requirements_context_tool(
-    tool_context: ToolContext = None
-):
-    """
-    Retrieve requirements context from session state - agent will generate test cases based on this
-    """
-
+async def retrieve_requirements_context_tool(tool_context: ToolContext = None):
     if not tool_context:
-        return {
-            "status": "error",
-            "message": "Tool context not available"
-        }
+        return {"status": "error", "message": "Tool context not available"}
 
-    # Retrieve context from session state using ToolContext.state
     analyzed_context = tool_context.state.get("analyzed_requirements_context")
     ready_for_generation = tool_context.state.get("ready_for_test_generation", False)
 
@@ -29,7 +20,6 @@ async def retrieve_requirements_context_tool(
             "available_state_keys": list(tool_context.state.keys())
         }
 
-    # Extract and return all relevant data for the agent to use
     requirements_analysis = analyzed_context.get("requirements_analysis", {})
     test_context = analyzed_context.get("test_context", {})
     metadata = analyzed_context.get("metadata", {})
@@ -54,8 +44,6 @@ async def retrieve_requirements_context_tool(
         "context_available": True
     }
 
-
-# Test Case Generator Agent
 test_case_generator_agent = Agent(
     model="gemini-2.5-flash",
     name="test_case_generator_agent",
@@ -112,9 +100,82 @@ test_case_generator_agent = Agent(
     """,
     tools=[retrieve_requirements_context_tool],
     planner=BuiltInPlanner(
-        thinking_config=types.ThinkingConfig(
-            include_thoughts=True,
-            thinking_budget=4096,
-        )
+        thinking_config=types.ThinkingConfig(include_thoughts=True, thinking_budget=4096)
     ),
 )
+
+async def generate_test_cases(session_id: str = None, prompt: str = "", analysis_depth: str = "comprehensive") -> Dict[str, Any]:
+    try:
+        # Create or reuse session service
+        session_service = InMemorySessionService()
+
+        # If session_id is provided, use it; otherwise create a new session
+        if session_id:
+            # Retrieve existing session to maintain context
+            session = await session_service.get_session(
+                app_name="test_case_generator",
+                user_id="user_123",
+                session_id=session_id
+            )
+        else:
+            # Create new session
+            session = await session_service.create_session(
+                app_name="test_case_generator",
+                user_id="user_123"
+            )
+
+        # Create runner with the test case generator agent
+        runner = Runner(
+            agent=test_case_generator_agent,
+            app_name="test_case_generator",
+            session_service=session_service
+        )
+
+        # Prepare the prompt with analysis depth context
+        full_prompt = f"""
+        Generate comprehensive test cases based on the requirements context available in session state.
+
+        Analysis Depth: {analysis_depth}
+        Additional Instructions: {prompt}
+
+        Please use the retrieve_requirements_context_tool to get the analyzed requirements from session state,
+        then generate detailed test cases based on that context.
+        """
+
+        content = types.Content(
+            role='user',
+            parts=[types.Part(text=full_prompt)]
+        )
+
+        # Run and collect response
+        events = runner.run_async(
+            user_id="user_123",
+            session_id=session.id,
+            new_message=content
+        )
+
+        response_text = ""
+        async for event in events:
+            if event.is_final_response():
+                response_text = event.content.parts[0].text
+                break
+
+        # Extract session state to check what context was available
+        session_state = session.state if hasattr(session, 'state') else {}
+        context_available = session_state.get("analyzed_requirements_context") is not None
+
+        return {
+            "status": "success",
+            "response": response_text,
+            "agent_used": "test_case_generator_agent",
+            "session_id": session.id,
+            "context_available": context_available,
+            "session_state_keys": list(session_state.keys()) if session_state else []
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "agent_used": "test_case_generator_agent"
+        }
