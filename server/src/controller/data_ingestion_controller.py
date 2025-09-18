@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, File, UploadFile, HTTPException, Form, FastAPI
 from fastapi.responses import JSONResponse
 from typing import Optional, List
@@ -5,35 +6,33 @@ import os
 import tempfile
 import uuid
 from pathlib import Path
-import mimetypes
 import sys
+import json
 
-# Add the project root to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# Import your document parser modules
+
+# Import RAG helpers
+try:
+    from helpers.rag_helper import RAGIngestionHelper
+    from modules.data_ingestion.factory import VectorStoreFactory
+    RAG_AVAILABLE = True
+except ImportError:
+    RAG_AVAILABLE = False
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 try:
     from modules.document_parser.service import DocumentProcessorService
     from modules.document_parser.models import ProcessingResult, DocumentMetadata
+    document_service = DocumentProcessorService()
+    DOCUMENT_SERVICE_AVAILABLE = True
 except ImportError:
-    # Fallback for testing - create mock classes
-    class DocumentProcessorService:
-        async def process_document(self, config):
-            return {"success": True, "chunks_created": 5, "document_id": config.get("document_id")}
+    DOCUMENT_SERVICE_AVAILABLE = False
+    document_service = None
 
-        async def search_documents(self, query, limit, filters):
-            return [{"text": f"Mock result for: {query}", "score": 0.95}]
-
-        async def get_document_status(self, document_id):
-            return {"document_id": document_id, "status": "completed", "chunks": 5}
-
-    class ProcessingResult:
-        pass
-
-    class DocumentMetadata:
-        pass
-
-router = APIRouter(prefix="/api/documents", tags=["Documents"])
+router = APIRouter()
 
 # Initialize your document processor service
 document_service = DocumentProcessorService()
@@ -193,6 +192,187 @@ async def upload_documents_batch(
         }
     )
 
+@router.post("/upload-with-rag")
+async def upload_document_with_rag_ingestion(
+    file: UploadFile = File(...),
+    document_id: Optional[str] = Form(None),
+    document_type: str = Form("general", description="Type: requirements, test_specs, domain_knowledge"),
+    metadata: Optional[str] = Form(None),
+    enable_rag: bool = Form(True, description="Enable RAG vector store ingestion"),
+    fail_on_rag_error: bool = Form(False, description="Fail entire request if RAG ingestion fails")
+):
+    """
+    Upload and process document with optional RAG ingestion
+    IMPROVED: Proper error handling and status codes
+    """
+    document_processing_success = False
+    rag_ingestion_success = False
+    temp_file_path = None
+
+    try:
+        if not DOCUMENT_SERVICE_AVAILABLE:
+            raise HTTPException(status_code=503, detail="Document processing service not available")
+
+        # Generate document ID if not provided
+        if not document_id:
+            document_id = str(uuid.uuid4())
+
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No filename provided")
+
+        file_extension = Path(file.filename).suffix.lower()
+        file_type = _determine_file_type(file_extension, file.content_type)
+
+        if not file_type:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type: {file_extension}"
+            )
+
+        # Create temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+
+        # Step 1: Process document using existing service
+        processing_config = {
+            'document_id': document_id,
+            'type': file_type,
+            'path': temp_file_path,
+            'original_filename': file.filename,
+            'file_size': len(content)
+        }
+
+        # Add metadata
+        if metadata:
+            try:
+                additional_metadata = json.loads(metadata)
+                processing_config.update(additional_metadata)
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid JSON metadata for document {document_id}")
+
+        # Step 1: Document Processing (MUST succeed)
+        try:
+            result = await document_service.process_document(processing_config)
+            document_processing_success = True
+            logger.info(f"Document processing successful for {document_id}")
+        except Exception as doc_error:
+            logger.error(f"Document processing failed for {document_id}: {str(doc_error)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Document processing failed: {str(doc_error)}"
+            )
+
+        # Step 2: RAG Ingestion (Optional, configurable failure behavior)
+        rag_result = {"status": "disabled", "message": "RAG not enabled"}
+
+        if enable_rag:
+            if not RAG_AVAILABLE:
+                error_msg = "RAG system not available - missing dependencies"
+                logger.error(error_msg)
+                if fail_on_rag_error:
+                    raise HTTPException(status_code=503, detail=error_msg)
+                else:
+                    rag_result = {"status": "unavailable", "message": error_msg}
+            else:
+                try:
+                    # Initialize RAG helper
+                    rag_helper = RAGIngestionHelper()
+
+                    # Prepare file info
+                    file_info = {
+                        "filename": file.filename,
+                        "file_type": file_type,
+                        "file_size": len(content)
+                    }
+
+                    # Parse additional metadata for RAG
+                    additional_rag_metadata = {}
+                    if metadata:
+                        try:
+                            additional_rag_metadata = json.loads(metadata)
+                        except json.JSONDecodeError:
+                            pass
+
+                    # Ingest to RAG
+                    rag_result = await rag_helper.ingest_processing_result_to_rag(
+                        processing_result=result,
+                        document_id=document_id,
+                        document_type=document_type,
+                        file_info=file_info,
+                        additional_metadata=additional_rag_metadata
+                    )
+
+                    if rag_result.get("status") == "success":
+                        rag_ingestion_success = True
+                        logger.info(f"RAG ingestion successful for {document_id}")
+                    else:
+                        error_msg = f"RAG ingestion failed: {rag_result.get('message', 'Unknown error')}"
+                        logger.error(error_msg)
+                        if fail_on_rag_error:
+                            raise HTTPException(status_code=500, detail=error_msg)
+
+                except Exception as rag_error:
+                    error_msg = f"RAG ingestion failed: {str(rag_error)}"
+                    logger.error(error_msg)
+
+                    if fail_on_rag_error:
+                        raise HTTPException(status_code=500, detail=error_msg)
+                    else:
+                        rag_result = {
+                            "status": "error",
+                            "message": error_msg,
+                            "rag_chunks_created": 0
+                        }
+
+        if document_processing_success and (not enable_rag or rag_ingestion_success):
+            status_code = 200
+            overall_status = "success"
+        elif document_processing_success and enable_rag and not rag_ingestion_success:
+            status_code = 207
+            overall_status = "partial_success"
+        else:
+            status_code = 500
+            overall_status = "failure"
+
+        response_content = {
+            "status": overall_status,
+            "document_id": document_id,
+            "file_type": file_type,
+            "original_filename": file.filename,
+            "processing_result": result,
+            "content": result.get('content'),
+            "rag_ingestion": rag_result,
+            "components": {
+                "document_processing": "success" if document_processing_success else "failed",
+                "rag_ingestion": "success" if rag_ingestion_success else ("failed" if enable_rag else "disabled")
+            },
+            "message": f"Document processed with {result.get('chunks_created', 0)} chunks" +
+                      (f" and {rag_result.get('rag_chunks_created', 0)} RAG chunks" if rag_result.get('status') == 'success' else "")
+        }
+
+        return JSONResponse(
+            status_code=status_code,
+            content=response_content
+        )
+
+    except HTTPException:
+        # Re-raise HTTP exceptions (they already have proper status codes)
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error processing document {document_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+    finally:
+        # Clean up temporary file
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.unlink(temp_file_path)
+            except Exception as cleanup_error:
+                logger.warning(f"Failed to cleanup temp file {temp_file_path}: {cleanup_error}")
+
 @router.get("/search")
 async def search_documents(
     query: str,
@@ -300,20 +480,3 @@ async def get_supported_types():
         "batch_limit": 10
     }
 
-# Create the FastAPI app at module level (not inside if __name__ == "__main__")
-app = FastAPI(title="Document Upload API")
-app.include_router(router)
-
-@app.get("/")
-async def root():
-    return {"message": "Document Upload API is running!"}
-
-# This runs only when the script is executed directly
-if __name__ == "__main__":
-    import uvicorn
-
-    print("🚀 Starting Document Upload API...")
-    print("📖 API Docs: http://localhost:8000/docs")
-    print("📤 Upload: http://localhost:8000/api/documents/upload")
-
-    uvicorn.run("src.controller.module_test_controller:app", host="0.0.0.0", port=8000, reload=True)

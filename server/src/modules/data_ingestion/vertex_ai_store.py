@@ -2,7 +2,6 @@ from .interfaces import VectorStoreInterface, VectorSearchResult
 from google.cloud import aiplatform, aiplatform_v1
 from vertexai.language_models import TextEmbeddingModel
 from typing import List, Dict, Optional
-import json
 
 class VertexAIVectorStore(VectorStoreInterface):
     """WORKING Vertex AI Vector Search implementation"""

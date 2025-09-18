@@ -2,7 +2,6 @@ import asyncio
 from typing import Dict, List, Optional, Any
 import logging
 from concurrent.futures import ThreadPoolExecutor
-import os
 import time
 
 from .utils import DocumentProcessor, SmartTextChunker

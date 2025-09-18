@@ -1,8 +1,5 @@
 from google.cloud import aiplatform
-# from google.cloud.aiplatform import MatchingEngineIndex, MatchingEngineIndexEndpoint
 import vertexai
-from typing import List, Dict, Optional
-import json
 
 class VertexVectorStore:
     def __init__(self, project_id: str, location: str = "us-central1"):
