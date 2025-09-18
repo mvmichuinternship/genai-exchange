@@ -101,7 +101,7 @@ async def analyze_requirements_context_tool(
 
 # Requirements Analyzer Agent
 requirement_analyzer_agent = Agent(
-    model="gemini-2.5-flash-lite",
+    model="gemini-2.5-flash",
     name="requirement_analyzer_agent",
     description="Analyzes requirements and stores context in session state",
     instruction="""

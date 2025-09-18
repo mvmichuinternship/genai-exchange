@@ -13,6 +13,7 @@ google-auth-oauthlib
 google-auth-httplib2
 google.adk
 google-cloud-alloydb-connector
+vertexai
 
 # Database
 pg8000
