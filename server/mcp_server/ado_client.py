@@ -190,87 +190,209 @@ class ADOClient:
                     "assigned_to": fields.get("System.AssignedTo", {}).get("displayName") if fields.get("System.AssignedTo") else None
                 }
     
+    # async def create_testcase(self, user_story_id: int, testcase_data: Dict) -> Dict:
+    #     """Create a new test case linked to a user story"""
+    #     if not self.is_configured:
+    #         raise ValueError("ADO client not configured")
+        
+    #     # Prepare test case work item
+    #     test_case_fields = [
+    #         {
+    #             "op": "add",
+    #             "path": "/fields/System.Title",
+    #             "value": testcase_data.get("title", "Generated Test Case")
+    #         },
+    #         {
+    #             "op": "add",
+    #             "path": "/fields/System.WorkItemType",
+    #             "value": "Test Case"
+    #         },
+    #         {
+    #             "op": "add",
+    #             "path": "/fields/Microsoft.VSTS.Common.Priority",
+    #             "value": testcase_data.get("priority", 2)
+    #         },
+    #         {
+    #             "op": "add",
+    #             "path": "/fields/System.AreaPath",
+    #             "value": testcase_data.get("area_path", self.project)
+    #         }
+    #     ]
+        
+    #     # Add test steps if provided
+    #     if testcase_data.get("steps"):
+    #         steps_xml = self._format_test_steps(testcase_data["steps"])
+    #         test_case_fields.append({
+    #             "op": "add",
+    #             "path": "/fields/Microsoft.VSTS.TCM.Steps",
+    #             "value": steps_xml
+    #         })
+        
+    #     # Add description if provided
+    #     if testcase_data.get("description"):
+    #         test_case_fields.append({
+    #             "op": "add",
+    #             "path": "/fields/System.Description",
+    #             "value": testcase_data["description"]
+    #         })
+        
+    #     # Create the test case
+    #     url = f"{self.base_url}/{self.project}/_apis/wit/workitems/$Test%20Case"
+    #     params = {"api-version": "7.1-preview.3"}
+        
+    #     async with aiohttp.ClientSession() as session:
+    #         async with session.patch(
+    #             url, 
+    #             headers={**self.headers, "Content-Type": "application/json-patch+json"},
+    #             json=test_case_fields,
+    #             params=params
+    #         ) as response:
+                
+    #             if response.status not in [200, 201]:
+    #                 error_text = await response.text()
+    #                 return {
+    #                     "success": False,
+    #                     "error": f"Failed to create test case: {error_text}",
+    #                     "status_code": response.status
+    #                 }
+                
+    #             test_case = await response.json()
+    #             test_case_id = test_case.get("id")
+                
+    #             # Now link the test case to the user story
+    #             link_result = await self._link_test_case_to_user_story(test_case_id, user_story_id)
+                
+    #             return {
+    #                 "success": True,
+    #                 "test_case_id": test_case_id,
+    #                 "title": test_case.get("fields", {}).get("System.Title"),
+    #                 "user_story_id": user_story_id,
+    #                 "link_success": link_result.get("success", False),
+    #                 "url": test_case.get("url"),
+    #                 "created_date": test_case.get("fields", {}).get("System.CreatedDate")
+    #             }
+
     async def create_testcase(self, user_story_id: int, testcase_data: Dict) -> Dict:
-        """Create a new test case linked to a user story"""
+        """Create a new test case linked to a user story with enhanced error handling"""
         if not self.is_configured:
-            raise ValueError("ADO client not configured")
-        
-        # Prepare test case work item
-        test_case_fields = [
-            {
-                "op": "add",
-                "path": "/fields/System.Title",
-                "value": testcase_data.get("title", "Generated Test Case")
-            },
-            {
-                "op": "add",
-                "path": "/fields/System.WorkItemType",
-                "value": "Test Case"
-            },
-            {
-                "op": "add",
-                "path": "/fields/Microsoft.VSTS.Common.Priority",
-                "value": testcase_data.get("priority", 2)
-            },
-            {
-                "op": "add",
-                "path": "/fields/System.AreaPath",
-                "value": testcase_data.get("area_path", self.project)
+            return {
+                "success": False,
+                "error": "ADO client not configured",
+                "error_code": "NOT_CONFIGURED"
             }
-        ]
         
-        # Add test steps if provided
-        if testcase_data.get("steps"):
-            steps_xml = self._format_test_steps(testcase_data["steps"])
-            test_case_fields.append({
-                "op": "add",
-                "path": "/fields/Microsoft.VSTS.TCM.Steps",
-                "value": steps_xml
-            })
-        
-        # Add description if provided
-        if testcase_data.get("description"):
-            test_case_fields.append({
-                "op": "add",
-                "path": "/fields/System.Description",
-                "value": testcase_data["description"]
-            })
-        
-        # Create the test case
-        url = f"{self.base_url}/{self.project}/_apis/wit/workitems/$Test%20Case"
-        params = {"api-version": "7.1-preview.3"}
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.patch(
-                url, 
-                headers={**self.headers, "Content-Type": "application/json-patch+json"},
-                json=test_case_fields,
-                params=params
-            ) as response:
-                
-                if response.status not in [200, 201]:
-                    error_text = await response.text()
-                    return {
-                        "success": False,
-                        "error": f"Failed to create test case: {error_text}",
-                        "status_code": response.status
-                    }
-                
-                test_case = await response.json()
-                test_case_id = test_case.get("id")
-                
-                # Now link the test case to the user story
-                link_result = await self._link_test_case_to_user_story(test_case_id, user_story_id)
-                
+        try:
+            # Validate required fields
+            if not testcase_data.get("title"):
                 return {
-                    "success": True,
-                    "test_case_id": test_case_id,
-                    "title": test_case.get("fields", {}).get("System.Title"),
-                    "user_story_id": user_story_id,
-                    "link_success": link_result.get("success", False),
-                    "url": test_case.get("url"),
-                    "created_date": test_case.get("fields", {}).get("System.CreatedDate")
+                    "success": False,
+                    "error": "Test case title is required",
+                    "error_code": "MISSING_TITLE"
                 }
+            
+            # Prepare test case work item
+            test_case_fields = [
+                {
+                    "op": "add",
+                    "path": "/fields/System.Title",
+                    "value": testcase_data.get("title")
+                },
+                {
+                    "op": "add",
+                    "path": "/fields/System.WorkItemType",
+                    "value": "Test Case"
+                },
+                {
+                    "op": "add",
+                    "path": "/fields/Microsoft.VSTS.Common.Priority",
+                    "value": testcase_data.get("priority", 2)
+                },
+                {
+                    "op": "add",
+                    "path": "/fields/System.AreaPath",
+                    "value": testcase_data.get("area_path", self.project)
+                }
+            ]
+            
+            # Add test steps if provided (ALWAYS required for generated test cases)
+            if testcase_data.get("steps"):
+                steps_xml = self._format_test_steps(testcase_data["steps"])
+                test_case_fields.append({
+                    "op": "add",
+                    "path": "/fields/Microsoft.VSTS.TCM.Steps",
+                    "value": steps_xml
+                })
+            else:
+                logger.warning(f"Creating test case without steps for user story {user_story_id}")
+            
+            # Add description if provided
+            if testcase_data.get("description"):
+                test_case_fields.append({
+                    "op": "add",
+                    "path": "/fields/System.Description",
+                    "value": testcase_data["description"]
+                })
+            
+            # Create the test case
+            url = f"{self.base_url}/{self.project}/_apis/wit/workitems/$Test%20Case"
+            params = {"api-version": "7.1-preview.3"}
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(
+                    url, 
+                    headers={**self.headers, "Content-Type": "application/json-patch+json"},
+                    json=test_case_fields,
+                    params=params
+                ) as response:
+                    
+                    if response.status not in [200, 201]:
+                        error_text = await response.text()
+                        logger.error(f"ADO API error creating test case: {error_text}")
+                        return {
+                            "success": False,
+                            "error": f"ADO API failed to create test case: {error_text}",
+                            "status_code": response.status,
+                            "error_code": "ADO_API_ERROR",
+                            "user_story_id": user_story_id
+                        }
+                    
+                    test_case = await response.json()
+                    test_case_id = test_case.get("id")
+                    
+                    if not test_case_id:
+                        return {
+                            "success": False,
+                            "error": "No test case ID returned from ADO",
+                            "error_code": "INVALID_RESPONSE"
+                        }
+                    
+                    # Now link the test case to the user story
+                    link_result = await self._link_test_case_to_user_story(test_case_id, user_story_id)
+                    
+                    result = {
+                        "success": True,
+                        "test_case_id": test_case_id,
+                        "title": test_case.get("fields", {}).get("System.Title"),
+                        "user_story_id": user_story_id,
+                        "link_success": link_result.get("success", False),
+                        "url": test_case.get("url"),
+                        "created_date": test_case.get("fields", {}).get("System.CreatedDate")
+                    }
+                    
+                    if not link_result.get("success"):
+                        result["link_warning"] = link_result.get("error", "Failed to link to user story")
+                        logger.warning(f"Test case {test_case_id} created but linking to user story {user_story_id} failed")
+                    
+                    return result
+                    
+        except Exception as e:
+            logger.error(f"Unexpected error creating test case: {e}")
+            return {
+                "success": False,
+                "error": f"Unexpected error: {str(e)}",
+                "error_code": "UNEXPECTED_ERROR",
+                "user_story_id": user_story_id
+            }
     
     async def _link_test_case_to_user_story(self, test_case_id: int, user_story_id: int) -> Dict:
         """Create a link between test case and user story"""
@@ -380,8 +502,10 @@ class ADOClient:
                     "changed_date": fields.get("System.ChangedDate"),
                     "updated_fields": list(updates.keys())
                 }
-    
-    def _format_test_steps(self, steps: List[Dict]) -> str:
+
+
+
+    # def _format_test_steps(self, steps: List[Dict]) -> str:
         """Format test steps into ADO XML format"""
         if not steps:
             return ""
@@ -405,6 +529,100 @@ class ADOClient:
         steps_xml += "</steps>"
         return steps_xml
     
+    # def _format_test_steps(self, steps: List[Dict]) -> str:
+        """Format test steps into ADO XML format - FIXED VERSION"""
+        if not steps:
+            return ""
+        
+        steps_xml = "<steps id='0' last='{}'>".format(len(steps))
+        
+        for i, step in enumerate(steps, 1):
+            action = step.get("action", "")
+            expected = step.get("expected", "")
+            
+            # Escape HTML characters properly
+            action_escaped = action.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            expected_escaped = expected.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            
+            steps_xml += f"""
+    <step id="{i}" type="ActionStep">
+        <parameterizedString isformatted="true">
+        <DIV><P>{action_escaped}</P></DIV>
+        </parameterizedString>
+        <parameterizedString isformatted="true">
+        <DIV><P>{expected_escaped}</P></DIV>
+        </parameterizedString>
+        <description/>
+    </step>"""
+        
+        steps_xml += "\n</steps>"
+        return steps_xml
+
+    def _format_test_steps(self, steps: List[Dict]) -> str:
+        """Format test steps into ADO XML format"""
+        from xml.sax.saxutils import escape
+        
+        if not steps:
+            return ""
+        
+        total = len(steps)
+        parts = [f'<steps id="0" last="{total}">']
+        
+        for i, step in enumerate(steps, 1):
+            action = escape(step.get("action", "").strip())
+            expected = escape(step.get("expected", "").strip())
+            
+            parts.append(f'''
+  <step id="{i}" type="ActionStep">
+    <parameterizedString isformatted="true"><![CDATA[<div><p>{action}</p></div>]]></parameterizedString>
+    <parameterizedString isformatted="true"><![CDATA[<div><p>{expected}</p></div>]]></parameterizedString>
+    <description />
+  </step>''')
+        
+        parts.append("</steps>")
+        return "".join(parts)
+    
+
+async def update_test_steps(self, testcase_id: int, steps: List[Dict]) -> Dict:
+    """Update test case steps using the Test Management API"""
+    if not self.is_configured:
+        raise ValueError("ADO client not configured")
+
+    steps_xml = self._format_test_steps(steps)
+
+    url = f"{self.base_url}/{self.project}/_apis/wit/workitems/{testcase_id}?api-version=7.1-preview.3"
+
+    update_operations = [
+        {
+            "op": "add",
+            "path": "/fields/Microsoft.VSTS.TCM.Steps",
+            "value": steps_xml
+        }
+    ]
+
+    async with aiohttp.ClientSession() as session:
+        async with session.patch(
+            url,
+            headers={**self.headers, "Content-Type": "application/json-patch+json"},
+            json=update_operations
+        ) as response:
+
+            if response.status not in [200, 201]:
+                return {
+                    "success": False,
+                    "error": f"Failed to update steps: {await response.text()}",
+                    "status_code": response.status
+                }
+
+            result = await response.json()
+            return {
+                "success": True,
+                "test_case_id": testcase_id,
+                "updated_fields": ["steps"],
+                "changed_date": result.get("fields", {}).get("System.ChangedDate")
+            }
+
+
     async def search_work_items(self, query: str, work_item_types: List[str] = None) -> Dict:
         """Search for work items using WIQL"""
         if not self.is_configured:

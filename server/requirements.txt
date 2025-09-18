@@ -60,11 +60,14 @@ atlassian-python-api
 mcp-atlassian
 mcp
 fastmcp
+asyncio-mqtt
 
 # Utilities
 python-dotenv
 structlog
 rich
+pathlib
+logging
 
 # Testing
 pytest
