@@ -2,11 +2,10 @@ import logging
 from fastapi import APIRouter, HTTPException, Request
 import uuid
 import json
-from typing import List, Dict, Any, Optional
+from typing import List
 
 from adk_service.agents.requirement_analyzer.agent import (
     requirement_analyzer_agent,
-    analyze_requirements
 )
 from adk_service.agents.test_case_generator.agent import (
     test_case_generator_agent,
@@ -17,9 +16,6 @@ from modules.cache.redis_manager import redis_manager
 from modules.database.session_service import SessionService
 from utils.parsers import (
     parse_test_cases_from_agent_response,
-    parse_test_cases_from_text,
-    extract_requirements_from_workflow,
-    extract_test_cases_from_workflow
 )
 
 # Add your RAG import here - ADJUST THE PATH TO YOUR ACTUAL RAG MODULE
@@ -30,26 +26,22 @@ logger = logging.getLogger(__name__)  # ✅ CORRECT LOGGER
 
 class SessionAPIController:
     def __init__(self):
-        # ✅ CORRECT - Use agent instances, not classes
         self.requirement_analyzer = requirement_analyzer_agent
         self.test_case_generator = test_case_generator_agent
 
-    # ✅ ADD THIS METHOD - Simple session creation without sequential workflow
     async def create_simple_session(self, request: Request):
         """Create a simple session without running workflow"""
         data = await request.json()
         user_id = data.get('user_id', 'default_user')
         project_name = data.get('project_name', 'New Project')
-        user_prompt = data.get('prompt', 'Default session prompt')
 
-        if not user_prompt:
-            raise HTTPException(status_code=400, detail="Prompt is required")
+
 
         session_id = f"session_{uuid.uuid4().hex[:12]}"
 
         try:
             # Just create the session in database
-            await db_manager.create_session(session_id, user_id, project_name, user_prompt)
+            await db_manager.create_session(session_id, user_id, project_name, "Session creation")
             await db_manager.update_session_status(session_id, "created")
 
             return {
@@ -164,7 +156,6 @@ class SessionAPIController:
             if not target_req:
                 raise HTTPException(status_code=404, detail="Requirement not found")
 
-            # ✅ CORRECT - Use the actual agent function
             requirement_text = target_req.get('edited_content') or target_req.get('original_content')
             agent_response = await generate_test_cases(
                 session_context=None,
@@ -365,7 +356,7 @@ session_controller = SessionAPIController()
 
 @router.post("/sessions")
 async def create_session(request: Request):
-    return await session_controller.create_simple_session(request)  # ✅ FIXED - Now calls correct method
+    return await session_controller.create_simple_session(request)
 
 @router.get("/sessions/{session_id}")
 async def get_session(session_id: str):

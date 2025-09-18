@@ -1,5 +1,4 @@
 import asyncpg
-import os
 
 class DatabaseSchema:
     @staticmethod

@@ -8,6 +8,7 @@ import uvicorn
 from controller.session_api_controller import router as session_router
 from controller.requirements_controller import router as requirements_router
 from controller.test_cases_controller import router as test_cases_router
+from controller.data_ingestion_controller import router as data_ingestion_router
 
 # Import database manager
 from modules.database.database_manager import db_manager
@@ -96,6 +97,12 @@ async def shutdown():
 # ===============================
 
 # Register all routers with proper prefixes
+app.include_router(
+    data_ingestion_router,
+    prefix="/api/v2/data-ingestion",
+    tags=["Data Ingestion"]
+)
+
 app.include_router(
     session_router,
     prefix="/api/v2/sessions",

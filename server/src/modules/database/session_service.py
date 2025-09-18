@@ -1,5 +1,5 @@
 from .database_manager import db_manager
-from typing import List, Dict, Any
+from typing import List
 
 class SessionService:
     @staticmethod
