@@ -6,42 +6,54 @@ from typing import List, Dict, Any
 from google.adk.sessions import InMemorySessionService, Session
 from google.adk.runners import Runner
 
-async def retrieve_requirements_context_tool(tool_context: ToolContext = None):
-    if not tool_context:
-        return {"status": "error", "message": "Tool context not available"}
-
-    analyzed_context = tool_context.state.get("analyzed_requirements_context")
-    ready_for_generation = tool_context.state.get("ready_for_test_generation", False)
-
-    if not analyzed_context or not ready_for_generation:
+async def retrieve_requirements_context_tool(requirements_input: str = "", tool_context: ToolContext = None):
+    """
+    Process and analyze requirements input directly instead of retrieving from session state
+    """
+    if not requirements_input:
         return {
             "status": "error",
-            "message": "Requirements context not found in session state. Please run Requirements Analyzer first.",
-            "available_state_keys": list(tool_context.state.keys())
+            "message": "No requirements input provided. Please provide requirements text to analyze.",
         }
 
-    requirements_analysis = analyzed_context.get("requirements_analysis", {})
-    test_context = analyzed_context.get("test_context", {})
-    metadata = analyzed_context.get("metadata", {})
+    # Basic analysis of requirements input
+    requirements_lines = [line.strip() for line in requirements_input.split('\n') if line.strip()]
+
+    # Simple categorization based on keywords (can be enhanced)
+    functional_requirements = []
+    non_functional_requirements = []
+    business_rules = []
+
+    for line in requirements_lines:
+        line_lower = line.lower()
+        if any(keyword in line_lower for keyword in ['shall', 'must', 'should', 'function', 'feature']):
+            functional_requirements.append(line)
+        elif any(keyword in line_lower for keyword in ['performance', 'security', 'usability', 'reliability']):
+            non_functional_requirements.append(line)
+        elif any(keyword in line_lower for keyword in ['rule', 'policy', 'constraint', 'validation']):
+            business_rules.append(line)
+        else:
+            functional_requirements.append(line)  # Default to functional
 
     return {
         "status": "success",
-        "message": "Requirements context successfully retrieved from session state",
+        "message": "Requirements input successfully processed",
         "context_data": {
-            "original_requirements": metadata.get("original_requirements", []),
-            "functional_requirements": requirements_analysis.get("functional_requirements", []),
-            "non_functional_requirements": requirements_analysis.get("non_functional_requirements", []),
-            "business_rules": requirements_analysis.get("business_rules", []),
-            "user_stories": requirements_analysis.get("user_stories", []),
-            "acceptance_criteria": requirements_analysis.get("acceptance_criteria", []),
-            "integration_points": requirements_analysis.get("integration_points", []),
-            "critical_flows": test_context.get("critical_flows", []),
-            "edge_cases_identified": test_context.get("edge_cases_identified", []),
-            "risk_areas": test_context.get("risk_areas", []),
-            "analysis_depth": metadata.get("analysis_depth", ""),
-            "source_count": metadata.get("source_count", 0)
+            "original_requirements": requirements_lines,
+            "functional_requirements": functional_requirements,
+            "non_functional_requirements": non_functional_requirements,
+            "business_rules": business_rules,
+            "user_stories": [],  # Can be extracted if format is provided
+            "acceptance_criteria": [],  # Can be extracted if format is provided
+            "integration_points": [],  # Can be identified through analysis
+            "critical_flows": [],  # Can be identified through analysis
+            "edge_cases_identified": [],  # Can be identified through analysis
+            "risk_areas": [],  # Can be identified through analysis
+            "analysis_depth": "basic",
+            "source_count": len(requirements_lines)
         },
-        "context_available": True
+        "context_available": True,
+        "requirements_input": requirements_input
     }
 
 test_case_generator_agent = Agent(
@@ -94,7 +106,9 @@ test_case_generator_agent = Agent(
     - Generate test cases based on the actual retrieved context, not assumptions
     - If context is missing, inform the user and request Requirements Analyzer to run first
     - Organize test cases by type (functional, security, edge case, negative)
-    - Provide a summary of total test cases generated
+    - Provide a summary of total test cases
+    - Return all the generated test cases as response
+    - Generate the test cases in a properly structured format.One test case then a line space and then the next test case.
 
     Remember: You retrieve context via tool call, but generate all test cases directly in your response!
     """,
@@ -104,25 +118,16 @@ test_case_generator_agent = Agent(
     ),
 )
 
-async def generate_test_cases(session_id: str = None, prompt: str = "", analysis_depth: str = "comprehensive") -> Dict[str, Any]:
+async def generate_test_cases(session_id: str = None, prompt: str = "", analysis_depth: str = "comprehensive", requirements_input:str = "") -> Dict[str, Any]:
     try:
         # Create or reuse session service
         session_service = InMemorySessionService()
 
-        # If session_id is provided, use it; otherwise create a new session
-        if session_id:
-            # Retrieve existing session to maintain context
-            session = await session_service.get_session(
-                app_name="test_case_generator",
-                user_id="user_123",
-                session_id=session_id
-            )
-        else:
             # Create new session
-            session = await session_service.create_session(
-                app_name="test_case_generator",
-                user_id="user_123"
-            )
+        session = await session_service.create_session(
+            app_name="test_case_generator",
+            user_id="user_123"
+        )
 
         # Create runner with the test case generator agent
         runner = Runner(
@@ -137,6 +142,7 @@ async def generate_test_cases(session_id: str = None, prompt: str = "", analysis
 
         Analysis Depth: {analysis_depth}
         Additional Instructions: {prompt}
+        Make use of the requirements for the test case generation: {requirements_input}
 
         Please use the retrieve_requirements_context_tool to get the analyzed requirements from session state,
         then generate detailed test cases based on that context.
@@ -160,17 +166,12 @@ async def generate_test_cases(session_id: str = None, prompt: str = "", analysis
                 response_text = event.content.parts[0].text
                 break
 
-        # Extract session state to check what context was available
-        session_state = session.state if hasattr(session, 'state') else {}
-        context_available = session_state.get("analyzed_requirements_context") is not None
 
         return {
             "status": "success",
             "response": response_text,
             "agent_used": "test_case_generator_agent",
             "session_id": session.id,
-            "context_available": context_available,
-            "session_state_keys": list(session_state.keys()) if session_state else []
         }
 
     except Exception as e:

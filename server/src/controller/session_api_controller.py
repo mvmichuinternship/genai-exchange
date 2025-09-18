@@ -13,6 +13,7 @@ from adk_service.agents.test_case_generator.agent import (
     generate_test_cases
 )
 from modules.database.database_manager import db_manager
+from modules.cache.redis_manager import redis_manager
 from modules.database.session_service import SessionService
 from utils.parsers import (
     parse_test_cases_from_agent_response,
@@ -65,9 +66,15 @@ class SessionAPIController:
             raise HTTPException(status_code=500, detail=f"Session creation failed: {str(e)}")
 
     async def get_session(self, session_id: str):
+        cache_key = f"session:{session_id}"
+        cached_session = await redis_manager.get(cache_key)
+
+        if cached_session:
+            return cached_session
         session_data = await SessionService.get_session_summary(session_id)
         if not session_data:
             raise HTTPException(status_code=404, detail="Session not found")
+        await redis_manager.set(cache_key, session_data, ttl=300)
         return session_data
 
     async def list_user_sessions(self, user_id: str):
@@ -79,12 +86,19 @@ class SessionAPIController:
         }
 
     async def get_session_requirements(self, session_id: str):
+        cache_key = f"requirements:{session_id}"
+        cached_requirements = await redis_manager.get(cache_key)
+
+        if cached_requirements:
+            return cached_requirements
         requirements = await db_manager.get_requirements(session_id)
-        return {
+        result =  {
             "session_id": session_id,
             "requirements": requirements,
             "total_count": len(requirements)
         }
+        await redis_manager.set(cache_key, result, ttl=120)
+        return result
 
     async def update_requirements(self, session_id: str, request: Request):
         data = await request.json()
@@ -92,6 +106,8 @@ class SessionAPIController:
         if not requirements:
             raise HTTPException(status_code=400, detail="Requirements list is required")
         result = await db_manager.update_requirements(session_id, requirements)
+        await redis_manager.delete(f"requirements:{session_id}")
+        await redis_manager.delete(f"session:{session_id}")
         return {
             **result,
             "message": f"Successfully updated {result['updated_count']} requirements"
@@ -127,12 +143,19 @@ class SessionAPIController:
             raise HTTPException(status_code=500, detail=f"Failed to delete requirement: {str(e)}")
 
     async def get_session_test_cases(self, session_id: str):
+        cache_key = f"test_cases:{session_id}"
+        cached_test_cases = await redis_manager.get(cache_key)
+        if cached_test_cases:
+            logger.info(f"✅ Cache hit for test cases: {session_id}")
+            return cached_test_cases
         test_cases = await db_manager.get_test_cases(session_id)
-        return {
+        result =  {
             "session_id": session_id,
             "test_cases": test_cases,
             "total_count": len(test_cases)
         }
+        await redis_manager.set(cache_key, result, ttl=120)
+        return result
 
     async def regenerate_test_cases_for_requirement(self, session_id: str, requirement_id: str):
         try:
@@ -206,55 +229,10 @@ class SessionAPIController:
             logger.error(f"Failed to get coverage report for session {session_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 
-    async def get_session_analytics(self, session_id: str):
-        try:
-            session = await db_manager.get_session(session_id)
-            requirements = await db_manager.get_requirements(session_id)
-            test_cases = await db_manager.get_test_cases(session_id)
-            coverage = await db_manager.get_coverage_report(session_id)
-
-            edited_requirements = sum(1 for r in requirements if r.get('edited_content'))
-            user_created_requirements = sum(1 for r in requirements if r.get('status') == 'user_created')
-
-            return {
-                "session_id": session_id,
-                "session_info": session,
-                "metrics": {
-                    "total_requirements": len(requirements),
-                    "edited_requirements": edited_requirements,
-                    "user_created_requirements": user_created_requirements,
-                    "total_test_cases": len(test_cases),
-                    "coverage_percentage": coverage.get('coverage_percentage', 0)
-                },
-                "coverage_summary": coverage
-            }
-        except Exception as e:
-            logger.error(f"Failed to get analytics for session {session_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-    async def export_session_data(self, session_id: str, format_type: str = "json"):
-        try:
-            session = await db_manager.get_session(session_id)
-            requirements = await db_manager.get_requirements(session_id)
-            test_cases = await db_manager.get_test_cases(session_id)
-
-            export_data = {
-                "session": session,
-                "requirements": requirements,
-                "test_cases": test_cases,
-                "exported_at": "2025-09-17T00:47:00Z"
-            }
-
-            if format_type.lower() == "csv":
-                return self._convert_to_csv_format(export_data)
-            else:
-                return export_data
-        except Exception as e:
-            logger.error(f"Failed to export session data for {session_id}: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
+    from modules.cache.redis_manager import redis_manager  # Add this import
 
     async def fetch_and_save_rag_context(self, request: Request):
-        """Fetch RAG context and save to database for agent access"""
+        """Fetch RAG context and save to database for agent access - Now with Redis caching!"""
         data = await request.json()
         prompt = data.get('prompt')
         session_id = data.get('session_id')
@@ -271,17 +249,37 @@ class SessionAPIController:
             await db_manager.create_session(session_id, user_id, project_name, prompt)
 
         rag_context_array = []
+        from_cache = False  # Track cache usage
 
         if enable_rag:
-            try:
-                rag_context_array = await get_rag_context_as_text_array_tool(
-                    query_context=prompt,
-                    context_scope=context_scope
-                )
-                logger.info(f"RAG context retrieved: {len(rag_context_array)} items")
-            except Exception as rag_error:
-                logger.warning(f"RAG context failed, continuing without: {rag_error}")
+            # ✅ CORRECTED - Use session-based cache key for consistency
+            cache_key = f"rag_context:{session_id}"
+            cached_context = await redis_manager.get(cache_key)
 
+            if cached_context:
+                # 🚀 CACHE HIT - Ultra fast response!
+                rag_context_array = cached_context
+                from_cache = True
+                logger.info(f"✅ Using cached RAG context for session {session_id}: {len(rag_context_array)} items")
+            else:
+                # 💾 CACHE MISS - Fetch from Vector Search (expensive)
+                try:
+                    rag_context_array = await get_rag_context_as_text_array_tool(
+                        query_context=prompt,
+                        context_scope=context_scope
+                    )
+
+                    # ✅ CORRECTED - Use permanent cache for session-based storage
+                    if rag_context_array:
+                        await redis_manager.set_permanent(cache_key, rag_context_array)
+                        logger.info(f"✅ Permanently cached RAG context for session {session_id}: {len(rag_context_array)} items")
+                    else:
+                        logger.info("📭 No RAG context retrieved")
+
+                except Exception as rag_error:
+                    logger.warning(f"RAG context failed, continuing without: {rag_error}")
+
+        # 📀 SAVE TO DATABASE (unchanged - your existing logic)
         if rag_context_array:
             await db_manager.save_requirements(session_id, rag_context_array)
 
@@ -294,6 +292,7 @@ class SessionAPIController:
 
         await db_manager.update_session_status(session_id, "rag_context_loaded")
 
+        # ✅ ENHANCED RESPONSE with session-consistent information
         return {
             "session_id": session_id,
             "status": "success",
@@ -301,9 +300,14 @@ class SessionAPIController:
             "rag_enabled": enable_rag,
             "rag_items_count": len(rag_context_array),
             "context_scope": context_scope,
-            "message": f"RAG context fetched and saved: {len(rag_context_array)} items",
+            "from_cache": from_cache,
+            "cache_key": f"rag_context:{session_id}",  # ✅ ADDED - Return the consistent cache key
+            "cache_performance": "🚀 INSTANT" if from_cache else "🔍 FRESH_FETCH",
+            "message": f"RAG context {'retrieved from cache' if from_cache else 'fetched and cached'}: {len(rag_context_array)} items",
             "database_saved": True
         }
+
+
 
     async def get_rag_context(self, session_id: str):
         """Get saved RAG context for a session"""

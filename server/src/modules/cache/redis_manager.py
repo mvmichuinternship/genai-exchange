@@ -1,4 +1,4 @@
-import aioredis
+import redis.asyncio as redis
 import json
 import hashlib
 from typing import Any, Optional
@@ -11,12 +11,14 @@ class RedisManager:
         self.redis = None
 
     async def initialize(self):
-        """Initialize Redis connection"""
+        """Initialize Redis connection using redis-py"""
         try:
-            self.redis = aioredis.from_url(
-                "redis://localhost:6379",
-                encoding="utf8",
-                decode_responses=True
+            self.redis = redis.Redis(
+                host='localhost',
+                port=6379,
+                decode_responses=True,
+                socket_connect_timeout=5,
+                socket_timeout=5
             )
             await self.redis.ping()
             logger.info("✅ Redis connected successfully")
@@ -44,6 +46,16 @@ class RedisManager:
         except Exception as e:
             logger.warning(f"Redis set error: {e}")
 
+    async def set_permanent(self, key: str, value: Any):
+        """Set value in cache with NO expiration (permanent)"""
+        if not self.redis:
+            return
+        try:
+            await self.redis.set(key, json.dumps(value))
+            logger.info(f"✅ Permanently cached: {key}")
+        except Exception as e:
+            logger.warning(f"Redis permanent set error: {e}")
+
     async def delete(self, key: str):
         """Delete key from cache"""
         if not self.redis:
@@ -57,6 +69,11 @@ class RedisManager:
         """Create a hash key from arguments"""
         key_string = ":".join(str(arg) for arg in args)
         return hashlib.md5(key_string.encode()).hexdigest()
+
+    async def close(self):
+        """Close Redis connection"""
+        if self.redis:
+            await self.redis.close()
 
 # Global Redis instance
 redis_manager = RedisManager()

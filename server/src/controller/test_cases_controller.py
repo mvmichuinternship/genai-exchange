@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException, Request
 from typing import List, Dict
 
 from modules.database.database_manager import db_manager
+from modules.cache.redis_manager import redis_manager
 from adk_service.agents.test_case_generator.agent import generate_test_cases
 from utils.parsers import parse_test_cases_from_agent_response
 
@@ -26,12 +27,15 @@ class TestCasesController:
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
 
+        requirements_cache_key = f"requirements_analyzed:{session_id}"
+        requirements_input = await redis_manager.get(requirements_cache_key)
+
         try:
             # Enhance prompt with test types
             enhanced_prompt = f"{prompt}\n\nGenerate the following types of test cases: {', '.join(test_types)}"
 
             # Call the agent function
-            agent_response = await generate_test_cases(session_context=None, prompt=enhanced_prompt)
+            agent_response = await generate_test_cases(session_id=session_id, prompt=enhanced_prompt, analysis_depth=None, requirements_input=requirements_input)
 
             if agent_response['status'] == 'success':
                 # Parse test cases from agent response
@@ -47,7 +51,7 @@ class TestCasesController:
                     "status": "success",
                     "test_types_requested": test_types,
                     "generated_test_cases_count": len(test_cases),
-                    "test_cases": test_cases,
+                    "test_cases": agent_response['response'],
                     "agent_used": agent_response['agent_used'],
                     "message": "Test cases successfully generated and stored"
                 }

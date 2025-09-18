@@ -85,6 +85,7 @@ async def startup():
 async def shutdown():
     try:
         await db_manager.close()
+        await redis_manager.close()
         logger.info("✅ Database connections closed")
         logger.info("✅ Application shutdown complete")
     except Exception as e:

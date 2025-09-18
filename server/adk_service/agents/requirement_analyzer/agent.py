@@ -70,7 +70,7 @@ async def analyze_requirements_context_tool(
         tool_context.state["analyzed_requirements_context"] = analyzed_context
         tool_context.state["ready_for_test_generation"] = True
 
-        print(analyzed_context)
+        # print(analyzed_context)
 
         return {
             "status": "success",
@@ -110,6 +110,7 @@ requirement_analyzer_agent = Agent(
     - Always pass the ToolContext parameter when calling the tool
     - The tool uses tool_context.state (not tool_context.session.state)
     - Verify successful context storage before completing the task
+    - Return the complete requirement analysis you have done in a structured format as the response.
 
     Always use the tool to ensure proper context storage for the next agent.
     """,
@@ -153,7 +154,7 @@ async def analyze_requirements(requirements_list: List[str], analysis_depth: str
         response_text = ""
         async for event in events:
             if event.is_final_response():
-                response_text = event.content.parts[0].text
+                response_text = event.content.parts[0].text.strip()
                 break
 
         # print(response_text)

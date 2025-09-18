@@ -4,6 +4,7 @@ import uuid
 from typing import List
 
 from modules.database.database_manager import db_manager
+from modules.cache.redis_manager import redis_manager
 from adk_service.agents.requirement_analyzer.agent import analyze_requirements
 from utils.parsers import extract_requirements_from_agent_response
 
@@ -18,8 +19,11 @@ class RequirementsController:
         user_id = data.get('user_id', 'default_user')
         project_name = data.get('project_name', 'Requirements Analysis')
         session_id = data.get('session_id')
-        requirements_input = data.get('requirements', [])
         analysis_depth = data.get('analysis_depth', 'comprehensive')
+
+        rag_cache_key = f"rag_context:{session_id}"
+        requirements_cache_key = f"requirements_analyzed:{session_id}"
+        requirements_input = await redis_manager.get(rag_cache_key)
 
         if not requirements_input:
             raise HTTPException(status_code=400, detail="Requirements input is required")
@@ -41,6 +45,7 @@ class RequirementsController:
                     await db_manager.save_requirements(session_id, extracted_requirements)
 
                 await db_manager.update_session_status(session_id, "requirements_analyzed")
+                await redis_manager.set_permanent(requirements_cache_key, agent_response["response"])
 
                 return {
                     "session_id": session_id,
@@ -74,11 +79,14 @@ class RequirementsController:
         """Update requirements after user edits"""
         data = await request.json()
         requirements = data.get('requirements', [])
-
+        requirements_cache_key = f"requirements_analyzed:{session_id}"
+        await redis_manager.delete(requirements_cache_key)
         if not requirements:
             raise HTTPException(status_code=400, detail="Requirements list is required")
 
         result = await db_manager.update_requirements(session_id, requirements)
+        requirements_cache_key = f"requirements_analyzed:{session_id}"
+        await redis_manager.set_permanent(requirements_cache_key, requirements)
         return {
             **result,
             "message": f"Successfully updated {result['updated_count']} requirements"
