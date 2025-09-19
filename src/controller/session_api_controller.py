@@ -51,7 +51,6 @@ class SessionAPIController:
                 "session_id": session_id,
                 "user_id": user_id,
                 "project_name": project_name,
-                "user_prompt": user_prompt,
                 "status": "created",
                 "message": "Session created successfully",
                 "database_saved": True
