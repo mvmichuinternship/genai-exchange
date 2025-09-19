@@ -4,14 +4,14 @@ import os
 import json
 import uuid
 from typing import List, Dict, Any, Optional
-
+from config import settings
 
 class DatabaseManager:
     def __init__(self):
         self.pool = None
 
     async def initialize(self):
-        database_url = os.getenv('DATABASE_URL','postgresql://testgen_user:testgen_pass@localhost:5432/testgen_db')
+        database_url = settings.database_url
         self.pool = await asyncpg.create_pool(database_url, min_size=5, max_size=20)
         await self.create_essential_tables()
         print("✅ Database initialized with minimal schema!")

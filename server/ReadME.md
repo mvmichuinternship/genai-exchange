@@ -513,7 +513,7 @@ lsof -i :8001
 kill -9 <PID>
 
 # Use different ports
-API_PORT=8080 ADK_SERVICE_PORT=8081 python main.py
+API_PORT=8000 ADK_SERVICE_PORT=8081 python main.py
 ```
 
 

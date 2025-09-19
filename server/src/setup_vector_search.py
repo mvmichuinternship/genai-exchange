@@ -6,7 +6,7 @@ Run this before using the upload-with-rag endpoint
 
 import asyncio
 from google.cloud import aiplatform
-from modules.data_ingestion.vector_db import VertexVectorStore
+from src.modules.data_ingestion.vector_db import VertexVectorStore
 
 async def setup_vertex_vector_search():
     """Create and deploy Vertex AI Vector Search resources"""
