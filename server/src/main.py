@@ -3,6 +3,10 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 
 # Import your controllers
 from controller.session_api_controller import router as session_router
@@ -13,6 +17,9 @@ from controller.data_ingestion_controller import router as data_ingestion_router
 # Import database manager
 from modules.database.database_manager import db_manager
 from modules.cache.redis_manager import redis_manager
+
+from config import settings
+
 
 # Configure logging
 logging.basicConfig(
@@ -27,7 +34,8 @@ app = FastAPI(
     description="AI-powered test case generation with RAG and session management",
     version="2.0.0",
     docs_url="/docs",
-    redoc_url="/redoc"
+    redoc_url="/redoc",
+    debug=settings.debug
 )
 
 # Add CORS middleware

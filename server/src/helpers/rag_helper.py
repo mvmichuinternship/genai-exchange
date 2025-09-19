@@ -3,7 +3,7 @@ from typing import List, Dict, Optional, Any
 from pathlib import Path
 import json
 import logging
-from modules.data_ingestion.factory import VectorStoreFactory
+from src.modules.data_ingestion.factory import VectorStoreFactory
 
 logger = logging.getLogger(__name__)
 
