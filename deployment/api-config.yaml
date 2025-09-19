@@ -1,0 +1,169 @@
+swagger: '2.0'
+info:
+  title: TestGen Backend API
+  version: 1.0.0
+schemes:
+  - https
+produces:
+  - application/json
+
+x-google-backend:
+  address: https://testgen-backend-195472357560.us-central1.run.app
+  protocol: h2
+  path_translation: APPEND_PATH_TO_ADDRESS
+
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check
+      responses:
+        200:
+          description: Service is healthy
+
+  /api/v2/sessions:
+    get:
+      operationId: getSessions
+      summary: Get sessions
+      responses:
+        200:
+          description: Success
+    post:
+      operationId: createSession
+      summary: Create session
+      responses:
+        200:
+          description: Success
+
+  /api/v2/sessions/{sessionId}:
+    get:
+      operationId: getSession
+      summary: Get specific session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+    put:
+      operationId: updateSession
+      summary: Update session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+    delete:
+      operationId: deleteSession
+      summary: Delete session
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+
+  /api/v2/requirements:
+    get:
+      operationId: getRequirements
+      summary: Get requirements
+      responses:
+        200:
+          description: Success
+    post:
+      operationId: createRequirement
+      summary: Create requirement
+      responses:
+        200:
+          description: Success
+
+  /api/v2/requirements/{requirementId}:
+    get:
+      operationId: getRequirement
+      summary: Get specific requirement
+      parameters:
+        - name: requirementId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+    put:
+      operationId: updateRequirement
+      summary: Update requirement
+      parameters:
+        - name: requirementId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+    delete:
+      operationId: deleteRequirement
+      summary: Delete requirement
+      parameters:
+        - name: requirementId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+
+  /api/v2/test-cases:
+    get:
+      operationId: getTestCases
+      summary: Get test cases
+      responses:
+        200:
+          description: Success
+    post:
+      operationId: createTestCase
+      summary: Create test case
+      responses:
+        200:
+          description: Success
+
+  /api/v2/test-cases/{testCaseId}:
+    get:
+      operationId: getTestCase
+      summary: Get specific test case
+      parameters:
+        - name: testCaseId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+    put:
+      operationId: updateTestCase
+      summary: Update test case
+      parameters:
+        - name: testCaseId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
+    delete:
+      operationId: deleteTestCase
+      summary: Delete test case
+      parameters:
+        - name: testCaseId
+          in: path
+          required: true
+          type: string
+      responses:
+        200:
+          description: Success
