@@ -13,21 +13,21 @@ logger = logging.getLogger(__name__)
 
 def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
     """Register all MCP tools with the server"""
-    
+
     # Configuration Tools
     @mcp.tool()
     async def configure_ado_connection(
         organization: str,
-        project: str, 
+        project: str,
         personal_access_token: str
     ) -> List[TextContent]:
         """Configure Azure DevOps connection"""
         try:
             ado_client.configure(organization, project, personal_access_token)
             test_result = await ado_client.test_connection()
-            
+
             return [TextContent(type="text", text=json.dumps(test_result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -35,7 +35,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to configure ADO connection"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def initialize_traceability_manager(
         persistence_file: str = "traceability_matrix.json"
@@ -44,7 +44,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             result = await traceability_manager.initialize(persistence_file)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -52,7 +52,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to initialize traceability manager"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     # Core ADO Tools
     @mcp.tool()
     async def fetch_user_story(
@@ -61,16 +61,16 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         """Fetch user story details from Azure DevOps (raw data, no schema enforcement)"""
         try:
             result = await ado_client.fetch_user_story(user_story_id)
-            
+
             # Store in vector database if configured (future integration)
             if result.get("success") and vector_service and vector_service.is_configured:
                 # TODO: Implement vector storage when vector service is ready
                 # store_result = await vector_service.store_user_story_context(user_story_id, result)
                 # result["vector_storage"] = store_result
                 result["vector_storage"] = {"status": "not_implemented", "message": "Vector service integration pending"}
-            
+
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -79,7 +79,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to fetch user story"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def fetch_testcases(
         user_story_id: int
@@ -88,7 +88,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             result = await ado_client.fetch_testcases(user_story_id)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -97,7 +97,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to fetch test cases"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def create_testcase(
         user_story_id: int,
@@ -107,7 +107,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             # Validate test case data against schema
             validation_result = validate_testcase(testcase_data)
-            
+
             if not validation_result.is_valid:
                 return [TextContent(type="text", text=json.dumps({
                     "success": False,
@@ -116,7 +116,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                     "user_story_id": user_story_id,
                     "schema_help": test_case_validator.get_schema_documentation()
                 }, indent=2))]
-            
+
             # Convert validated Pydantic model to dict for ADO API
             validated_testcase = validation_result.validated_data
             testcase_dict = {
@@ -125,10 +125,10 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "steps": [{"action": step.action, "expected": step.expected} for step in validated_testcase.steps],
                 "priority": validated_testcase.priority
             }
-            
+
             # Create test case in ADO
             ado_result = await ado_client.create_testcase(user_story_id, testcase_dict)
-            
+
             # If successful, register in traceability manager
             if ado_result.get("success") and traceability_manager.is_initialized:
                 test_case_id = ado_result.get("test_case_id")
@@ -137,15 +137,15 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                         test_case_id, validated_testcase.title, "Active", [user_story_id], "mcp_generated"
                     )
                     ado_result["traceability"] = trace_result
-            
+
             # Add validation info to result
             ado_result["schema_validation"] = {
                 "passed": True,
                 "validator_used": True
             }
-            
+
             return [TextContent(type="text", text=json.dumps(ado_result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -154,7 +154,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to create test case"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def update_testcase(
         testcase_id: int,
@@ -173,7 +173,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                         "testcase_id": testcase_id,
                         "schema_help": test_case_validator.get_schema_documentation()
                     }, indent=2))]
-                
+
                 # Convert validated data if full update
                 validated_testcase = validation_result.validated_data
                 updates = {
@@ -184,15 +184,15 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 }
                 # Remove None values
                 updates = {k: v for k, v in updates.items() if v is not None}
-            
+
             result = await ado_client.update_testcase(testcase_id, updates)
-            
+
             # Add validation info if schema was used
             if all(key in updates for key in ["title", "description", "steps"]):
                 result["schema_validation"] = {"passed": True, "validator_used": True}
-            
+
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -201,7 +201,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to update test case"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     # Core Workflow Tool
     @mcp.tool()
     async def generate_testcases_from_story(
@@ -226,16 +226,16 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "validation_errors": [],
                 "creation_errors": []
             }
-            
+
             created_test_case_ids = []
-            
+
             for i, testcase_data in enumerate(agent_generated_testcases):
                 try:
                     # Validate with retry logic
                     validation_result = await test_case_validator.validate_with_retry(
                         testcase_data, "single"
                     )
-                    
+
                     if not validation_result.is_valid:
                         workflow_result["failed_validation"] += 1
                         workflow_result["validation_errors"].append({
@@ -244,9 +244,9 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                             "errors": validation_result.errors
                         })
                         continue
-                    
+
                     workflow_result["validated_count"] += 1
-                    
+
                     # Convert validated data for ADO API
                     validated_testcase = validation_result.validated_data
                     testcase_dict = {
@@ -255,15 +255,15 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                         "steps": [{"action": step.action, "expected": step.expected} for step in validated_testcase.steps],
                         "priority": validated_testcase.priority
                     }
-                    
+
                     # Create in ADO
                     create_result = await ado_client.create_testcase(user_story_id, testcase_dict)
-                    
+
                     if create_result.get("success"):
                         workflow_result["created_count"] += 1
                         test_case_id = create_result.get("test_case_id")
                         created_test_case_ids.append(test_case_id)
-                        
+
                         # Register in traceability
                         if traceability_manager.is_initialized:
                             await traceability_manager.register_test_case(
@@ -273,7 +273,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                                 [user_story_id],
                                 "agent_generated_workflow"
                             )
-                        
+
                         workflow_result["results"].append({
                             "index": i,
                             "test_case_id": test_case_id,
@@ -290,7 +290,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                             "validation_passed": True,
                             "creation_passed": False
                         })
-                
+
                 except Exception as tc_error:
                     workflow_result["failed_validation"] += 1
                     workflow_result["validation_errors"].append({
@@ -298,7 +298,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                         "title": testcase_data.get("title", f"Test Case {i+1}"),
                         "error": str(tc_error)
                     })
-            
+
             # Update traceability with batch info
             if created_test_case_ids and traceability_manager.is_initialized:
                 await traceability_manager.add_traceability_entry(
@@ -311,18 +311,18 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                         "creation_success_rate": workflow_result["created_count"] / max(workflow_result["validated_count"], 1)
                     }
                 )
-            
+
             # Overall success depends on having created at least one test case
             workflow_result["success"] = workflow_result["created_count"] > 0
             workflow_result["message"] = f"Workflow completed: {workflow_result['created_count']} test cases created successfully"
-            
+
             if workflow_result["failed_validation"] > 0:
                 workflow_result["message"] += f", {workflow_result['failed_validation']} failed validation"
             if workflow_result["failed_creation"] > 0:
                 workflow_result["message"] += f", {workflow_result['failed_creation']} failed creation"
-            
+
             return [TextContent(type="text", text=json.dumps(workflow_result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -331,7 +331,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to execute test case generation workflow"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     # Vector Search Tools (Future Integration - Placeholders)
     @mcp.tool()
     async def search_similar_stories(
@@ -349,13 +349,13 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
             "query": query,
             "planned_features": [
                 "Store user story embeddings in Vertex AI",
-                "Search for similar stories based on content similarity", 
+                "Search for similar stories based on content similarity",
                 "Return related test case patterns for reuse",
                 "Support semantic search across project history"
             ]
         }
         return [TextContent(type="text", text=json.dumps(placeholder_result, indent=2))]
-    
+
     @mcp.tool()
     async def store_story_embedding(
         user_story_id: int,
@@ -366,7 +366,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         # TODO: Implement when vector service is ready
         placeholder_result = {
             "success": False,
-            "error": "Vector storage not implemented yet", 
+            "error": "Vector storage not implemented yet",
             "message": "This feature will be available when Google Vertex AI integration is completed",
             "user_story_id": user_story_id,
             "planned_features": [
@@ -377,7 +377,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
             ]
         }
         return [TextContent(type="text", text=json.dumps(placeholder_result, indent=2))]
-    
+
     # Traceability Tools
     @mcp.tool()
     async def traceability_map(
@@ -387,7 +387,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             result = await traceability_manager.get_traceability_map(user_story_id)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -396,7 +396,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to get traceability map"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def get_test_cases_for_story(
         user_story_id: int
@@ -405,7 +405,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             result = await traceability_manager.get_test_cases_for_story(user_story_id)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -414,7 +414,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to get test cases for story"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def get_stories_for_test_case(
         test_case_id: int
@@ -423,7 +423,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             result = await traceability_manager.get_user_stories_for_test_case(test_case_id)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -432,7 +432,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to get stories for test case"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     # Schema Validation Tools
     @mcp.tool()
     async def get_testcase_schema() -> List[TextContent]:
@@ -440,7 +440,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             schema_doc = test_case_validator.get_schema_documentation()
             return [TextContent(type="text", text=json.dumps(schema_doc, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -448,7 +448,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to get schema documentation"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def validate_testcase_schema(
         testcase_data: Dict[str, Any]
@@ -456,14 +456,14 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         """Validate test case data against schema without creating it"""
         try:
             validation_result = validate_testcase(testcase_data)
-            
+
             result = {
                 "success": True,
                 "validation_passed": validation_result.is_valid,
                 "errors": validation_result.errors,
                 "warnings": validation_result.warnings
             }
-            
+
             if validation_result.is_valid:
                 result["message"] = "Test case schema validation passed"
                 result["validated_data"] = {
@@ -475,9 +475,9 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
             else:
                 result["message"] = "Test case schema validation failed"
                 result["help"] = test_case_validator.get_schema_documentation()
-            
+
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -485,34 +485,34 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to validate test case schema"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     # System Status Tools
     @mcp.tool()
     async def system_status() -> List[TextContent]:
         """Get comprehensive system status"""
         try:
             from datetime import datetime, timezone
-            
+
             status = {
                 "success": True,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "components": {}
             }
-            
+
             # ADO Client status
             status["components"]["ado_client"] = {
                 "configured": ado_client.is_configured,
                 "project": ado_client.project if ado_client.is_configured else None,
                 "base_url": ado_client.base_url if ado_client.is_configured else None
             }
-            
+
             # Vector Service status (placeholder)
             status["components"]["vector_service"] = {
                 "configured": False,
                 "service_type": None,
                 "message": "Vector service integration pending - placeholder ready"
             }
-            
+
             # Traceability Manager status
             if traceability_manager.is_initialized:
                 trace_map = await traceability_manager.get_traceability_map()
@@ -525,25 +525,25 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 status["components"]["traceability_manager"] = {
                     "initialized": False
                 }
-            
+
             # Schema Validator status
             status["components"]["schema_validator"] = {
                 "available": True,
                 "max_retries": test_case_validator.max_retries,
                 "supported_validations": ["single_testcase", "batch_testcase"]
             }
-            
+
             # Overall health
             critical_components_healthy = (
                 ado_client.is_configured and
                 traceability_manager.is_initialized
             )
-            
+
             status["overall_health"] = "healthy" if critical_components_healthy else "needs_configuration"
             status["ready_for_test_generation"] = critical_components_healthy
-            
+
             return [TextContent(type="text", text=json.dumps(status, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -551,7 +551,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to get system status"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     @mcp.tool()
     async def generate_traceability_report(
         format_type: str = "summary"  # summary, detailed, matrix
@@ -560,7 +560,7 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
         try:
             result = await traceability_manager.generate_traceability_report(format_type)
             return [TextContent(type="text", text=json.dumps(result, indent=2))]
-            
+
         except Exception as e:
             error_result = {
                 "success": False,
@@ -569,5 +569,5 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
                 "message": "Failed to generate traceability report"
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
-    
+
     logger.info("All MCP tools registered successfully")
