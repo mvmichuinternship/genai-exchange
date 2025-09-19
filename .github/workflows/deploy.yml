@@ -2,9 +2,9 @@ name: Deploy TestGen Backend to Cloud Run
 
 on:
   push:
-    branches: [ milestone-1/change-architecture ]
+    branches: [ main ]
   pull_request:
-    branches: [ milestone-1/change-architecture ]
+    branches: [ main ]
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
