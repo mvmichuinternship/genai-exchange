@@ -147,21 +147,23 @@ class DatabaseManager:
 
             return [dict(row) for row in rows]
 
-    async def update_requirements(self, session_id: str, requirements: List[Dict[str, Any]]) -> Dict[str, Any]:
+    async def update_requirements(self, session_id: str, requirements: List[str]) -> Dict[str, Any]:
         """Update existing requirements with user edits"""
         updated_count = 0
         async with self.pool.acquire() as conn:
-            for req in requirements:
-                req_id = req.get('id')
-                edited_content = req.get('content') or req.get('edited_content')
-
-                if req_id and edited_content:
-                    await conn.execute('''
-                        UPDATE requirements
-                        SET edited_content = $1, updated_at = NOW(), version = version + 1
-                        WHERE id = $2 AND session_id = $3
-                    ''', edited_content, req_id, session_id)
-                    updated_count += 1
+            for i, edited_content in enumerate(requirements):
+                await conn.execute('''
+                    UPDATE requirements
+                    SET edited_content = $1, updated_at = NOW(), version = version + 1
+                    WHERE session_id = $2 AND original_content = (
+                        SELECT original_content
+                        FROM requirements
+                        WHERE session_id = $2
+                        ORDER BY created_at ASC
+                        LIMIT 1 OFFSET $3
+                    )
+                ''', edited_content, session_id, i)
+                updated_count += 1
 
         return {"updated_count": updated_count, "session_id": session_id}
 
