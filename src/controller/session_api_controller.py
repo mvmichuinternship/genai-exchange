@@ -360,7 +360,7 @@ session_controller = SessionAPIController()
 async def create_session(request: Request):
     return await session_controller.create_simple_session(request)
 
-@router.get("/sessions/{session_id}")
+@router.get("/{session_id}")
 async def get_session(session_id: str):
     return await session_controller.get_session(session_id)
 
@@ -368,7 +368,7 @@ async def get_session(session_id: str):
 async def list_user_sessions(user_id: str):
     return await session_controller.list_user_sessions(user_id)
 
-@router.get("/sessions/{session_id}/requirements")
+@router.get("/{session_id}/requirements")
 async def get_requirements(session_id: str):
     return await session_controller.get_session_requirements(session_id)
 
