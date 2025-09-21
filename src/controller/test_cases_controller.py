@@ -38,11 +38,17 @@ class TestCasesController:
             agent_response = await generate_test_cases(session_id=session_id, prompt=enhanced_prompt, analysis_depth=None, requirements_input=requirements_input)
 
             if agent_response['status'] == 'success':
-                # Parse test cases from agent response
-                test_cases = parse_test_cases_from_agent_response(agent_response['response'])
+                # Store the complete response into the testData category
+                test_cases = [{
+                    "test_name": "Generated Test Cases",
+                    "test_description": agent_response['response'],
+                    "test_steps": [],
+                    "expected_results": "",
+                    "test_type": "generated",
+                    "priority": "medium"
+                }]
 
-                if test_cases:
-                    await db_manager.save_test_cases(session_id, test_cases)
+                await db_manager.save_test_cases(session_id, test_cases)
 
                 await db_manager.update_session_status(session_id, "test_cases_generated")
 
@@ -54,7 +60,7 @@ class TestCasesController:
                     "status": "success",
                     "test_types_requested": test_types,
                     "generated_test_cases_count": len(test_cases),
-                    "test_cases": all_test_cases,
+                    "test_cases": agent_response['response'],
                     "agent_used": agent_response['agent_used'],
                     "message": "Test cases successfully generated and stored"
                 }
@@ -99,7 +105,7 @@ class TestCasesController:
         agent_response = await generate_test_cases(session_context=None, prompt=prompt)
 
         if agent_response['status'] == 'success':
-            new_test_cases = parse_test_cases_from_agent_response(agent_response['response'])
+            new_test_cases = agent_response['response']
 
             # Add requirement links if specified
             if requirement_ids:
@@ -116,7 +122,7 @@ class TestCasesController:
                 "session_id": session_id,
                 "status": "regenerated",
                 "requirement_ids": requirement_ids,
-                "new_test_cases_count": len(new_test_cases),
+                "new_test_cases_count": 1,
                 "test_cases": new_test_cases
             }
         else:
