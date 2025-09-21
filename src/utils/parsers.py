@@ -74,6 +74,22 @@ def parse_test_cases_from_agent_response(agent_response: Any) -> List[Dict]:
 
     return test_cases
 
+    # If still no test cases, try to extract from plain text
+    if not test_cases:
+        test_case_pattern = re.compile(
+            r"(Test ID:\s*\w+.*?\n.*?)(?=Test ID:|\Z)",
+            re.DOTALL | re.IGNORECASE
+        )
+        matches = test_case_pattern.findall(text_content)
+        for match in matches:
+            test_case_text = match.strip()
+            test_case = {
+                "raw_text": test_case_text
+            }
+            test_cases.append(test_case)
+
+    return test_cases
+
 def parse_test_cases_from_text(text_content: str) -> List[Dict]:
     """Parse test cases from plain text content"""
     test_cases = []
