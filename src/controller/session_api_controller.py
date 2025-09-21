@@ -68,6 +68,15 @@ class SessionAPIController:
         session_data = await SessionService.get_session_summary(session_id)
         if not session_data:
             raise HTTPException(status_code=404, detail="Session not found")
+
+        # Fetch requirements and test cases
+        requirements = await db_manager.get_requirements(session_id)
+        test_cases = await db_manager.get_test_cases(session_id)
+
+        # Add requirements and test cases to the session data
+        session_data['requirements'] = requirements
+        session_data['test_cases'] = test_cases
+
         await redis_manager.set(cache_key, session_data, ttl=300)
         return session_data
 

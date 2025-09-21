@@ -3,9 +3,15 @@ from typing import Optional
 
 class Settings:
     # Database Configuration
+    DB_HOST: str = os.getenv('DB_HOST', 'localhost')
+    DB_NAME: str = os.getenv('DB_NAME', 'testgen_db')
+    DB_USER: str = os.getenv('DB_USER', 'testgen_user')
+    DB_PASSWORD: str = os.getenv('DB_PASSWORD', 'testgen_pass')
+    DB_PORT: str = os.getenv('DB_PORT', '5432')
+
     DATABASE_URL: str = os.getenv(
         'DATABASE_URL',
-        'postgresql://testgen_user:testgen_pass@localhost:5432/testgen_db'
+        f'postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
     )
 
     # API Configuration

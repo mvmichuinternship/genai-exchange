@@ -12,6 +12,7 @@ class DatabaseManager:
 
     async def initialize(self):
         database_url = settings.database_url
+        print(database_url)
         self.pool = await asyncpg.create_pool(database_url, min_size=5, max_size=20)
         await self.create_essential_tables()
         print("✅ Database initialized with minimal schema!")
