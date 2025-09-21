@@ -16,53 +16,59 @@ def parse_test_cases_from_agent_response(agent_response: Any) -> List[Dict]:
     try:
         # Try to parse as JSON first
         if text_content.strip().startswith('{') or text_content.strip().startswith('['):
-            parsed = json.loads(text_content)
-            if isinstance(parsed, list):
-                test_cases = parsed
-            elif isinstance(parsed, dict) and 'test_cases' in parsed:
-                test_cases = parsed['test_cases']
+            try:
+                parsed = json.loads(text_content)
+                if isinstance(parsed, list):
+                    test_cases = parsed
+                elif isinstance(parsed, dict) and 'test_cases' in parsed:
+                    test_cases = parsed['test_cases']
+                elif isinstance(parsed, dict):
+                    # If it's a dict but doesn't have 'test_cases', assume it's a single test case
+                    test_cases = [parsed]
+            except json.JSONDecodeError as e:
+                print(f"JSONDecodeError: {e}")
+                pass  # Ignore JSON parsing errors and try other methods
 
-        # If direct parsing failed, look for test case patterns
-        if not test_cases and 'TC_' in text_content:
-            test_case_pattern = r'TC_(\w+)_(\d+)'
-            matches = re.findall(test_case_pattern, text_content)
-
-            for category, number in matches:
-                test_id = f"TC_{category}_{number}"
-                test_cases.append({
-                    'test_name': f'Test Case {test_id}',
-                    'test_description': f'Generated test case for {category.lower()} testing',
-                    'test_steps': ['Navigate to application', 'Perform test action', 'Verify result'],
-                    'expected_results': 'Expected behavior should be observed',
-                    'test_type': category.lower() if category.lower() in ['functional', 'security', 'edge', 'negative'] else 'functional',
-                    'priority': 'high' if category.upper() == 'SEC' else 'medium'
-                })
 
         # If still no test cases, try to extract from structured content
         if not test_cases and isinstance(agent_response, dict) and 'content' in agent_response:
             content = agent_response['content']
             if isinstance(content, list):
                 for item in content:
-                    if item.get('type') == 'test_case':
-                        test_cases.append({
-                            'test_name': item.get('name', 'Generated Test'),
-                            'test_description': item.get('description', ''),
-                            'test_steps': item.get('steps', []),
-                            'expected_results': item.get('expected_result', ''),
-                            'test_type': item.get('test_type', 'functional'),
-                            'priority': item.get('priority', 'medium')
-                        })
+                    # Check for different possible keys for test case data
+                    test_name = item.get('test_name') or item.get('name', 'Generated Test')
+                    test_description = item.get('test_description') or item.get('description', '')
+                    test_steps = item.get('test_steps') or item.get('steps', [])
+                    expected_results = item.get('expected_results') or item.get('expected_result', '')
+                    test_type = item.get('test_type') or item.get('type', 'functional')
+                    priority = item.get('priority', 'medium')
 
-    except json.JSONDecodeError:
-        # If JSON parsing fails, create a default test case
-        test_cases = [{
-            'test_name': 'Generated Test Case',
-            'test_description': 'Test case generated from agent response',
-            'test_steps': ['Execute test based on requirements'],
-            'expected_results': 'System should behave as expected',
-            'test_type': 'functional',
-            'priority': 'medium'
-        }]
+                    test_cases.append({
+                        'test_name': test_name,
+                        'test_description': test_description,
+                        'test_steps': test_steps,
+                        'expected_results': expected_results,
+                        'test_type': test_type,
+                        'priority': priority
+                    })
+            elif isinstance(content, dict):
+                # Handle the case where 'content' is a dictionary representing a single test case
+                test_name = content.get('test_name') or content.get('name', 'Generated Test')
+                test_description = content.get('test_description') or content.get('description', '')
+                test_steps = content.get('test_steps') or content.get('steps', [])
+                expected_results = content.get('expected_results') or content.get('expected_result', '')
+                test_type = content.get('test_type') or content.get('type', 'functional')
+                priority = content.get('priority', 'medium')
+
+                test_cases.append({
+                    'test_name': test_name,
+                    'test_description': test_description,
+                    'test_steps': test_steps,
+                    'expected_results': expected_results,
+                    'test_type': test_type,
+                    'priority': priority
+                })
+
     except Exception as e:
         print(f"Error parsing test cases: {e}")
 

@@ -46,12 +46,15 @@ class TestCasesController:
 
                 await db_manager.update_session_status(session_id, "test_cases_generated")
 
+                # Fetch all test cases after generation
+                all_test_cases = await db_manager.get_test_cases(session_id)
+
                 return {
                     "session_id": session_id,
                     "status": "success",
                     "test_types_requested": test_types,
                     "generated_test_cases_count": len(test_cases),
-                    "test_cases": agent_response['response'],
+                    "test_cases": all_test_cases,
                     "agent_used": agent_response['agent_used'],
                     "message": "Test cases successfully generated and stored"
                 }
