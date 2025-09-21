@@ -41,7 +41,7 @@ class RequirementsController:
                 await db_manager.save_requirements(session_id, [raw_response])
 
                 await db_manager.update_session_status(session_id, "requirements_analyzed")
-                await redis_manager.set_permanent(requirements_cache_key, agent_response["response"])
+                await redis_manager.set_permanent(requirements_cache_key, raw_response)
 
                 return {
                     "session_id": session_id,
