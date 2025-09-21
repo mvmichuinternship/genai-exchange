@@ -6,7 +6,6 @@ from typing import List
 from modules.database.database_manager import db_manager
 from modules.cache.redis_manager import redis_manager
 from adk_service.agents.requirement_analyzer.agent import analyze_requirements
-from utils.parsers import extract_requirements_from_agent_response
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,12 +36,9 @@ class RequirementsController:
             agent_response = await analyze_requirements(requirements_input, analysis_depth)
 
             if agent_response['status'] == 'success':
-                # Extract requirements from agent response
-                extracted_requirements = extract_requirements_from_agent_response(agent_response['response'])
-
-                # Save to database
-                if extracted_requirements:
-                    await db_manager.save_requirements(session_id, extracted_requirements)
+                # Save the raw agent response as the requirement
+                raw_response = agent_response['response']
+                await db_manager.save_requirements(session_id, [raw_response])
 
                 await db_manager.update_session_status(session_id, "requirements_analyzed")
                 await redis_manager.set_permanent(requirements_cache_key, agent_response["response"])
@@ -52,7 +48,7 @@ class RequirementsController:
                     "status": "success",
                     "analysis_depth": analysis_depth,
                     "original_input_count": len(requirements_input),
-                    "analyzed_requirements_count": len(extracted_requirements),
+                    "analyzed_requirements_count": 1,
                     "requirements": agent_response,
                     "agent_used": agent_response['agent_used'],
                     "message": "Requirements successfully analyzed and stored"
