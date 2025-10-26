@@ -5,6 +5,7 @@ Registers all MCP tools for Azure DevOps test case generation
 import os
 import json
 import logging
+import aiohttp
 from typing import List, Dict, Any
 from mcp.types import TextContent
 
@@ -13,7 +14,7 @@ organization = os.getenv("ADO_ORG")
 project = os.getenv("ADO_PROJECT")
 personal_access_token = os.getenv("ADO_PAT")
 
-def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
+def register_all_tools(mcp, ado_client, jira_client, vector_service, traceability_manager):
     """Register all MCP tools with the server"""
     
     # Configuration Tools
@@ -570,4 +571,261 @@ def register_all_tools(mcp, ado_client, vector_service, traceability_manager):
             }
             return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
     
-    logger.info("All MCP tools registered successfully")
+    # ========================================
+    # JIRA TOOLS
+    # ========================================
+    
+    @mcp.tool()
+    async def configure_jira_connection(
+        base_url: str,
+        email: str,
+        api_token: str,
+        project_key: str
+    ) -> List[TextContent]:
+        """Configure Jira connection"""
+        try:
+            jira_client.configure(base_url, email, api_token, project_key)
+            test_result = await jira_client.test_connection()
+            return [TextContent(type="text", text=json.dumps(test_result, indent=2))]
+        except Exception as e:
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "message": "Failed to configure Jira connection"
+            }
+            return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+    
+    @mcp.tool()
+    async def fetch_jira_issue(issue_key: str) -> List[TextContent]:
+        """Fetch Jira issue/story details"""
+        try:
+            result = await jira_client.fetch_user_story(issue_key)
+            
+            if result.get("success") and vector_service.is_configured:
+                store_result = await vector_service.store_user_story_context(issue_key, result)
+                result["vector_storage"] = store_result
+            
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        except Exception as e:
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "issue_key": issue_key,
+                "message": "Failed to fetch Jira issue"
+            }
+            return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+    
+    @mcp.tool()
+    async def fetch_jira_testcases(story_key: str) -> List[TextContent]:
+        """Get all test cases linked to a Jira story"""
+        try:
+            result = await jira_client.fetch_testcases(story_key)
+            return [TextContent(type="text", text=json.dumps(result, indent=2))]
+        except Exception as e:
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "story_key": story_key,
+                "message": "Failed to fetch Jira test cases"
+            }
+            return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+    
+    @mcp.tool()
+    async def create_jira_testcase(
+        story_key: str,
+        title: str,
+        description: str = "",
+        steps: List[Dict[str, str]] = None,
+        priority: str = "Medium",
+        labels: List[str] = None
+    ) -> List[TextContent]:
+        """Create a new Jira test case linked to a story"""
+        try:
+            testcase_data = {
+                "title": title,
+                "description": description,
+                "steps": steps or [],
+                "priority": priority,
+                "labels": labels or []
+            }
+            
+            jira_result = await jira_client.create_testcase(story_key, testcase_data)
+            
+            if jira_result.get("success") and traceability_manager.is_initialized:
+                test_case_key = jira_result.get("test_case_key")
+                if test_case_key:
+                    trace_result = await traceability_manager.register_test_case(
+                        test_case_key, title, "Active", [story_key], "jira_agent_generated"
+                    )
+                    jira_result["traceability"] = trace_result
+            
+            return [TextContent(type="text", text=json.dumps(jira_result, indent=2))]
+        except Exception as e:
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "story_key": story_key,
+                "title": title,
+                "message": "Failed to create Jira test case"
+            }
+            return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+    
+    @mcp.tool()
+    async def batch_create_jira_testcases(
+        story_key: str,
+        test_cases: List[Dict[str, Any]]
+    ) -> List[TextContent]:
+        """Create multiple Jira test cases for a story in batch"""
+        try:
+            results = {
+                "success": True,
+                "story_key": story_key,
+                "total_requested": len(test_cases),
+                "created_count": 0,
+                "failed_count": 0,
+                "results": [],
+                "errors": []
+            }
+            
+            created_test_case_keys = []
+            
+            for i, tc_data in enumerate(test_cases):
+                try:
+                    create_result = await jira_client.create_testcase(story_key, tc_data)
+                    
+                    if create_result.get("success"):
+                        results["created_count"] += 1
+                        results["results"].append(create_result)
+                        
+                        test_case_key = create_result.get("test_case_key")
+                        if test_case_key:
+                            created_test_case_keys.append(test_case_key)
+                            
+                            if traceability_manager.is_initialized:
+                                await traceability_manager.register_test_case(
+                                    test_case_key,
+                                    tc_data.get("title", f"Test Case {i+1}"),
+                                    "Active",
+                                    [story_key],
+                                    "jira_batch_agent_generated"
+                                )
+                    else:
+                        results["failed_count"] += 1
+                        results["errors"].append({
+                            "index": i,
+                            "title": tc_data.get("title", f"Test Case {i+1}"),
+                            "error": create_result.get("error", "Unknown error")
+                        })
+                
+                except Exception as tc_error:
+                    results["failed_count"] += 1
+                    results["errors"].append({
+                        "index": i,
+                        "title": tc_data.get("title", f"Test Case {i+1}"),
+                        "error": str(tc_error)
+                    })
+            
+            if created_test_case_keys and traceability_manager.is_initialized:
+                await traceability_manager.add_traceability_entry(
+                    story_key, 
+                    created_test_case_keys,
+                    {"batch_operation": True, "generation_method": "jira_agent_batch", "alm": "jira"}
+                )
+            
+            results["success"] = results["failed_count"] == 0
+            results["message"] = f"Batch: {results['created_count']} created, {results['failed_count']} failed"
+            
+            return [TextContent(type="text", text=json.dumps(results, indent=2))]
+        except Exception as e:
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "story_key": story_key,
+                "message": "Failed batch Jira test case creation"
+            }
+            return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+    
+    @mcp.tool()
+    async def prepare_jira_test_case_context(
+        story_key: str,
+        search_similar: bool = True,
+        max_similar_results: int = 3
+    ) -> List[TextContent]:
+        """Prepare comprehensive context for Jira test case generation"""
+        try:
+            context_data = {
+                "story_key": story_key,
+                "alm_type": "jira",
+                "workflow_status": "preparing_context",
+                "context_sources": []
+            }
+            
+            story_result = await jira_client.fetch_user_story(story_key)
+            if story_result.get("success"):
+                context_data["user_story"] = story_result
+                context_data["context_sources"].append("jira")
+                
+                if vector_service.is_configured:
+                    store_result = await vector_service.store_user_story_context(story_key, story_result)
+                    context_data["vector_storage"] = store_result
+            else:
+                context_data["user_story_error"] = story_result.get("error")
+            
+            existing_tests_result = await jira_client.fetch_testcases(story_key)
+            if existing_tests_result.get("success"):
+                context_data["existing_test_cases"] = existing_tests_result
+                context_data["has_existing_tests"] = existing_tests_result.get("test_case_count", 0) > 0
+            
+            if search_similar and vector_service.is_configured and story_result.get("success"):
+                search_query = f"{story_result.get('title', '')} {story_result.get('description', '')[:200]}"
+                similar_result = await vector_service.search_similar_context(search_query, max_similar_results, 0.6)
+                if similar_result.get("success"):
+                    context_data["similar_stories"] = similar_result
+                    context_data["context_sources"].append("vector_similarity_search")
+            
+            if traceability_manager.is_initialized:
+                trace_result = await traceability_manager.get_test_cases_for_story(story_key)
+                context_data["traceability_info"] = trace_result
+                context_data["context_sources"].append("traceability_matrix")
+            
+            recommendations = []
+            if not context_data.get("has_existing_tests"):
+                recommendations.append("No existing test cases - full suite needed")
+            else:
+                count = context_data.get("existing_test_cases", {}).get("test_case_count", 0)
+                recommendations.append(f"Found {count} tests - consider gap analysis")
+            
+            if context_data.get("similar_stories", {}).get("total_results", 0) > 0:
+                recommendations.append("Similar stories found - leverage patterns")
+            
+            if story_result.get("success"):
+                test_suggestions = []
+                if story_result.get("acceptance_criteria"):
+                    test_suggestions.append("Generate tests from acceptance criteria")
+                if story_result.get("description"):
+                    test_suggestions.append("Generate functional tests")
+                test_suggestions.extend([
+                    "Generate positive path tests",
+                    "Generate negative path tests",
+                    "Generate edge case tests"
+                ])
+                context_data["test_generation_suggestions"] = test_suggestions
+            
+            context_data.update({
+                "success": True,
+                "workflow_status": "context_ready",
+                "recommendations": recommendations,
+                "ready_for_generation": story_result.get("success", False)
+            })
+            
+            return [TextContent(type="text", text=json.dumps(context_data, indent=2))]
+        except Exception as e:
+            error_result = {
+                "success": False,
+                "error": str(e),
+                "story_key": story_key,
+                "workflow_status": "context_preparation_failed"
+            }
+            return [TextContent(type="text", text=json.dumps(error_result, indent=2))]
+        
+    logger.info("All MCP tools registered (ADO + Jira)")  # ← This line should already exist
